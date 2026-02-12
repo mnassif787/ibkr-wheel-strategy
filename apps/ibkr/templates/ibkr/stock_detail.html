@@ -1,0 +1,940 @@
+{% extends 'base.html' %}
+{% load wheel_filters %}
+{% load humanize %}
+
+{% block title %}{{ stock.ticker }} Details - Wheel Strategy{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    
+    <!-- Back Button -->
+    <div class="mb-6">
+        <a href="{% url 'ibkr:hub' %}?tab=discovery&subtab=stocks" class="inline-flex items-center text-blue-600 hover:text-blue-800">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+            </svg>
+            Back to Stock Screener
+        </a>
+    </div>
+
+    <!-- Stock Header -->
+    <div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+        <div class="flex items-start justify-between">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">{{ stock.ticker }}</h1>
+                <p class="text-lg text-gray-600 mt-1">{{ stock.name }}</p>
+                {% if stock.sector %}
+                <p class="text-sm text-gray-500 mt-1">{{ stock.sector }} {% if stock.industry %}- {{ stock.industry }}{% endif %}</p>
+                {% endif %}
+            </div>
+            <div class="text-right">
+                <div class="text-3xl font-bold text-gray-900">${{ stock.last_price|floatformat:2 }}</div>
+                {% if stock.change_percent %}
+                <div class="text-sm mt-1 {% if stock.change_percent > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {{ stock.change_percent|floatformat:2 }}%
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- Left Column - Wheel Score & Analysis -->
+        <div class="lg:col-span-2 space-y-6">
+            
+            <!-- Price Chart -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <h2 class="text-xl font-bold text-gray-900">📊 Price Chart</h2>
+                    <span class="group relative inline-flex">
+                        <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-blue-600 bg-blue-100 rounded-full cursor-help transition-all duration-200 hover:bg-blue-600 hover:text-white hover:scale-110">i</span>
+                        <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-72 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                            Shows 30-day price history with support/resistance levels and RSI momentum. Green zones indicate good entry points for selling cash-secured puts.
+                            <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                        </span>
+                    </span>
+                </div>
+                <div class="h-64 mb-4">
+                    <canvas id="priceChart"></canvas>
+                </div>
+                <div class="border-t border-gray-200 pt-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm font-semibold text-gray-700">RSI Momentum</span>
+                        <span class="text-xs text-gray-500">Oversold < 30 | Overbought > 70</span>
+                    </div>
+                    <div class="h-32">
+                        <canvas id="rsiChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Wheel Score Card -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <h2 class="text-xl font-bold text-gray-900">🎯 Wheel Strategy Score</h2>
+                    <span class="group relative inline-flex">
+                        <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-blue-600 bg-blue-100 rounded-full cursor-help transition-all duration-200 hover:bg-blue-600 hover:text-white hover:scale-110">i</span>
+                        <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-72 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                            Composite 0-100 score evaluating how good this stock is for the wheel strategy. Considers volatility (premiums), liquidity (ease of trading), technicals (trend), stability (risk), and price level. Grade A (80+) = excellent candidate.
+                            <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                        </span>
+                    </span>
+                </div>
+                
+                <div class="flex items-center justify-between mb-6">
+                    <div class="flex items-center gap-4">
+                        <div class="text-5xl font-bold">{{ analysis.wheel_score }}</div>
+                        <div>
+                            <div class="px-3 py-1 rounded text-lg font-bold
+                                {% if analysis.grade == 'A' %}bg-green-500 text-white
+                                {% elif analysis.grade == 'B' %}bg-blue-500 text-white
+                                {% elif analysis.grade == 'C' %}bg-yellow-500 text-white
+                                {% else %}bg-red-500 text-white{% endif %}">
+                                Grade {{ analysis.grade }}
+                            </div>
+                            <div class="text-sm text-gray-600 mt-1">{{ analysis.strategy_rating }}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="text-right">
+                        <div class="text-lg font-semibold
+                            {% if analysis.entry_color == 'green' %}text-green-700
+                            {% elif analysis.entry_color == 'blue' %}text-blue-700
+                            {% elif analysis.entry_color == 'yellow' %}text-yellow-700
+                            {% else %}text-red-700{% endif %}">
+                            {{ analysis.entry_signal }}
+                        </div>
+                        <div class="text-sm text-gray-600">{{ analysis.entry_quality }} Quality</div>
+                    </div>
+                </div>
+
+                <!-- Score Breakdown -->
+                {% if analysis.score_breakdown %}
+                <div class="space-y-3">
+                    <h3 class="font-semibold text-gray-900 mb-3">Score Breakdown</h3>
+                    
+                    <!-- Volatility -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-700">Volatility Score</span>
+                            <span class="font-semibold">{{ analysis.score_breakdown.volatility_score|floatformat:0 }}/25</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-blue-600 h-2 rounded-full" style="width: {{ analysis.score_breakdown.volatility_score|mul:4 }}%"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Liquidity -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-700">Liquidity Score</span>
+                            <span class="font-semibold">{{ analysis.score_breakdown.liquidity_score|floatformat:0 }}/20</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-green-600 h-2 rounded-full" style="width: {{ analysis.score_breakdown.liquidity_score|mul:5 }}%"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Technical -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-700">Technical Score</span>
+                            <span class="font-semibold">{{ analysis.score_breakdown.technical_score|floatformat:0 }}/25</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-purple-600 h-2 rounded-full" style="width: {{ analysis.score_breakdown.technical_score|mul:4 }}%"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Stability -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-700">Stability Score</span>
+                            <span class="font-semibold">{{ analysis.score_breakdown.stability_score|floatformat:0 }}/20</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-indigo-600 h-2 rounded-full" style="width: {{ analysis.score_breakdown.stability_score|mul:5 }}%"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Price -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-700">Price Score</span>
+                            <span class="font-semibold">{{ analysis.score_breakdown.price_score|floatformat:0 }}/10</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-amber-600 h-2 rounded-full" style="width: {{ analysis.score_breakdown.price_score|mul:10 }}%"></div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Wheel Strategy Signals -->
+            {% if analysis.wheel_signals %}
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <h2 class="text-xl font-bold text-gray-900">📊 Wheel Strategy Analysis</h2>
+                    <span class="group relative inline-flex">
+                        <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-green-600 bg-green-100 rounded-full cursor-help transition-all duration-200 hover:bg-green-600 hover:text-white hover:scale-110">i</span>
+                        <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-72 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                            Specific analysis of each scoring factor. Shows why this stock scored high/low on volatility, liquidity, technicals, stability, and price level for the wheel strategy.
+                            <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                        </span>
+                    </span>
+                </div>
+                <div class="space-y-2">
+                    {% for signal in analysis.wheel_signals %}
+                    <div class="flex items-start gap-2 text-sm">
+                        <span class="mt-0.5">{{ signal|safe }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Technical Signals -->
+            {% if analysis.signals %}
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <h2 class="text-xl font-bold text-gray-900">📈 Technical Indicators</h2>
+                    <span class="group relative inline-flex">
+                        <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-purple-600 bg-purple-100 rounded-full cursor-help transition-all duration-200 hover:bg-purple-600 hover:text-white hover:scale-110">i</span>
+                        <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-72 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                            Weekly Wheel Strategy Signals: RSI < 35 = Oversold (Prime for CSPs!), Above 50-day EMA = Required, High IV = Better premiums. Best entry = RSI < 35 + BULLISH trend + Near support.
+                            <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                        </span>
+                    </span>
+                </div>
+                <div class="space-y-2">
+                    {% for signal in analysis.signals %}
+                    <div class="flex items-start gap-2 text-sm">
+                        <span>{{ signal }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Recommended Options -->
+            {% if signals %}
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <h2 class="text-xl font-bold text-gray-900">💰 Recommended Put Options</h2>
+                    <span class="group relative inline-flex">
+                        <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-amber-600 bg-amber-100 rounded-full cursor-help transition-all duration-200 hover:bg-amber-600 hover:text-white hover:scale-110">i</span>
+                        <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-72 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                            Best put options to sell based on current analysis. Delta 0.20-0.40 = 20-40% chance of assignment. APY shows annualized return if you sell this put.
+                            <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                        </span>
+                    </span>
+                </div>
+                <div class="space-y-4">
+                    {% for signal in signals %}
+                    <div class="border border-gray-200 rounded-lg p-4 hover:border-blue-500 transition-colors">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <div class="font-bold text-lg">${{ signal.option.strike }}</div>
+                                <div class="text-sm text-gray-600">{{ signal.option.expiration_date|date:"M d, Y" }} ({{ signal.option.dte }} days)</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-green-700 font-bold">${{ signal.premium|floatformat:2 }}</div>
+                                <div class="text-xs text-gray-600">{{ signal.apy_pct }}% APY</div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-4 text-sm mt-3">
+                            <div>
+                                <div class="text-gray-600">Delta</div>
+                                <div class="font-semibold">{{ signal.option.delta|floatformat:2 }}</div>
+                            </div>
+                            <div>
+                                <div class="text-gray-600">IV</div>
+                                <div class="font-semibold">{{ signal.option.implied_volatility|floatformat:0 }}%</div>
+                            </div>
+                            <div>
+                                <div class="text-gray-600">Status</div>
+                                <div class="px-2 py-0.5 rounded text-xs font-semibold
+                                    {% if signal.status == 'RECOMMENDED' %}bg-green-100 text-green-800
+                                    {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                                    {{ signal.status }}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-xs text-gray-600 mt-2">{{ signal.technical_reason }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            
+            <!-- Quick Options Preview -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-xl font-bold text-gray-900">⚡ Quick Options Preview</h2>
+                        <span class="group relative inline-flex">
+                            <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-green-600 bg-green-100 rounded-full cursor-help transition-all duration-200 hover:bg-green-600 hover:text-white hover:scale-110">i</span>
+                            <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-72 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                                Quick preview of top put options available for this stock. Strike = sell price, Premium = income per share, Delta = probability of assignment. Click "View All Options" for full chain.
+                                <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                            </span>
+                        </span>
+                    </div>
+                    <a href="{% url 'ibkr:hub' %}?tab=discovery&subtab=options&ticker={{ stock.ticker }}" 
+                       class="text-sm text-blue-600 hover:text-blue-800 font-semibold">
+                        View All →
+                    </a>
+                </div>
+                
+                {% if signals %}
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-gray-200">
+                                <th class="text-left py-2 text-xs font-semibold text-gray-600">Strike</th>
+                                <th class="text-right py-2 text-xs font-semibold text-gray-600">Premium</th>
+                                <th class="text-right py-2 text-xs font-semibold text-gray-600">APY</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for signal in signals|slice:":3" %}
+                            <tr class="border-b border-gray-100 hover:bg-blue-50 transition-colors">
+                                <td class="py-2 font-semibold">${{ signal.option.strike }}</td>
+                                <td class="text-right text-green-600 font-semibold">${{ signal.premium|floatformat:2 }}</td>
+                                <td class="text-right font-semibold">{{ signal.apy_pct }}%</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-6 text-gray-500">
+                    <div class="text-3xl mb-2">📊</div>
+                    <p class="text-sm">No options data available</p>
+                    <a href="{% url 'ibkr:hub' %}?tab=discovery&subtab=options&ticker={{ stock.ticker }}" 
+                       class="text-blue-600 hover:text-blue-800 text-sm font-semibold mt-2 inline-block">
+                        Sync Options Data →
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+
+        </div>
+
+        <!-- Right Column - Stock Metrics -->
+        <div class="space-y-6">
+            
+            <!-- IV Rank Gauge -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <h2 class="text-lg font-bold text-gray-900">IV Rank</h2>
+                    <span class="group relative inline-flex">
+                        <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-blue-600 bg-blue-100 rounded-full cursor-help transition-all duration-200 hover:bg-blue-600 hover:text-white hover:scale-110">i</span>
+                        <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-64 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                            IV Rank shows where current IV is relative to 52-week range. High IV Rank (>50) = expensive premiums, great for selling puts!
+                            <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                        </span>
+                    </span>
+                </div>
+                <div class="relative pt-1">
+                    {% if stock.iv_rank %}
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-3xl font-bold {% if stock.iv_rank >= 70 %}text-green-600{% elif stock.iv_rank >= 50 %}text-blue-600{% elif stock.iv_rank >= 30 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                            {{ stock.iv_rank|floatformat:0 }}
+                        </span>
+                        <span class="text-sm font-semibold {% if stock.iv_rank >= 70 %}text-green-600{% elif stock.iv_rank >= 50 %}text-blue-600{% elif stock.iv_rank >= 30 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                            {% if stock.iv_rank >= 70 %}Excellent{% elif stock.iv_rank >= 50 %}Good{% elif stock.iv_rank >= 30 %}Fair{% else %}Low{% endif %}
+                        </span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-3">
+                        <div class="h-3 rounded-full transition-all duration-500 {% if stock.iv_rank >= 70 %}bg-green-600{% elif stock.iv_rank >= 50 %}bg-blue-600{% elif stock.iv_rank >= 30 %}bg-yellow-600{% else %}bg-red-600{% endif %}" 
+                             style="width: {{ stock.iv_rank }}%"></div>
+                    </div>
+                    <div class="flex justify-between text-xs text-gray-500 mt-1">
+                        <span>0</span>
+                        <span>50</span>
+                        <span>100</span>
+                    </div>
+                    {% else %}
+                    <div class="text-center text-gray-500 py-4">No IV data available</div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Assignment Risk Indicator -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <h2 class="text-lg font-bold text-gray-900">Assignment Risk</h2>
+                    <span class="group relative inline-flex">
+                        <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-amber-600 bg-amber-100 rounded-full cursor-help transition-all duration-200 hover:bg-amber-600 hover:text-white hover:scale-110">i</span>
+                        <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-64 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                            Weekly Wheel Strategy Signal: RSI < 35 = Oversold (Great entry for CSPs). Above 50-day EMA + RSI < 35 = Ideal setup. Avoid selling puts when RSI > 70 (overbought).
+                            <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                        </span>
+                    </span>
+                </div>
+                <div class="relative pt-1">
+                    {% if stock.indicators.rsi or stock.indicators.ema_trend %}
+                    <div class="flex items-center justify-between mb-2">
+                        {% if stock.indicators.rsi %}
+                            {% if stock.indicators.rsi < 35 %}
+                                <span class="text-3xl font-bold text-green-600">Excellent</span>
+                                <span class="text-sm font-semibold text-green-600">Sell Puts Now</span>
+                            {% elif stock.indicators.rsi < 50 %}
+                                <span class="text-3xl font-bold text-blue-600">Good</span>
+                                <span class="text-sm font-semibold text-blue-600">Favorable</span>
+                            {% elif stock.indicators.rsi < 65 %}
+                                <span class="text-3xl font-bold text-yellow-600">Neutral</span>
+                                <span class="text-sm font-semibold text-yellow-600">Wait for Dip</span>
+                            {% elif stock.indicators.rsi < 75 %}
+                                <span class="text-3xl font-bold text-orange-600">Caution</span>
+                                <span class="text-sm font-semibold text-orange-600">Not Ideal</span>
+                            {% else %}
+                                <span class="text-3xl font-bold text-red-600">Avoid</span>
+                                <span class="text-sm font-semibold text-red-600">Overbought</span>
+                            {% endif %}
+                        {% elif stock.indicators.ema_trend %}
+                            {% if stock.indicators.ema_trend == 'BULLISH' %}
+                                <span class="text-3xl font-bold text-blue-600">Good</span>
+                                <span class="text-sm font-semibold text-blue-600">Uptrend</span>
+                            {% elif stock.indicators.ema_trend == 'BEARISH' %}
+                                <span class="text-3xl font-bold text-orange-600">Caution</span>
+                                <span class="text-sm font-semibold text-orange-600">Downtrend</span>
+                            {% else %}
+                                <span class="text-3xl font-bold text-yellow-600">Neutral</span>
+                                <span class="text-sm font-semibold text-yellow-600">Sideways</span>
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Visual Signal Bars -->
+                    <div class="grid grid-cols-5 gap-1 mb-3">
+                        {% if stock.indicators.rsi %}
+                            {% if stock.indicators.rsi < 35 %}
+                                <div class="h-3 rounded bg-green-600"></div>
+                                <div class="h-3 rounded bg-green-400"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                            {% elif stock.indicators.rsi < 50 %}
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-blue-600"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                            {% elif stock.indicators.rsi < 65 %}
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-yellow-600"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                            {% elif stock.indicators.rsi < 75 %}
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-orange-600"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                            {% else %}
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-gray-200"></div>
+                                <div class="h-3 rounded bg-red-600"></div>
+                            {% endif %}
+                        {% else %}
+                            <div class="h-3 rounded bg-gray-200"></div>
+                            <div class="h-3 rounded bg-gray-200"></div>
+                            <div class="h-3 rounded bg-yellow-600"></div>
+                            <div class="h-3 rounded bg-gray-200"></div>
+                            <div class="h-3 rounded bg-gray-200"></div>
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Strategy Analysis -->
+                    <div class="bg-blue-50 rounded-lg p-3 mb-3">
+                        <div class="text-xs font-semibold text-gray-900 mb-2">📋 Weekly Wheel Analysis</div>
+                        <div class="text-xs text-gray-700 space-y-1">
+                            {% if analysis.weekly_premium_avg %}
+                            <div class="flex items-start gap-2">
+                                <span class="text-purple-600 font-bold">•</span>
+                                <span>
+                                    <strong>Avg Weekly Premium (7-14 DTE):</strong>
+                                    <span class="text-purple-600 font-semibold">${{ analysis.weekly_premium_avg|floatformat:2 }}</span>
+                                    {% if analysis.weekly_premium_apy %}
+                                    <span class="text-gray-600">({{ analysis.weekly_premium_apy|floatformat:1 }}% APY)</span>
+                                    {% endif %}
+                                    {% if analysis.weekly_options_count %}
+                                    <span class="text-gray-500 text-[10px]">- {{ analysis.weekly_options_count }} contract{{ analysis.weekly_options_count|pluralize }}</span>
+                                    {% endif %}
+                                </span>
+                            </div>
+                            {% else %}
+                            <div class="flex items-start gap-2">
+                                <span class="text-gray-400 font-bold">•</span>
+                                <span class="text-gray-500 italic">No weekly options data available (7-14 DTE)</span>
+                            </div>
+                            {% endif %}
+                            {% if stock.indicators.rsi %}
+                            <div class="flex items-start gap-2">
+                                <span class="{% if stock.indicators.rsi < 35 %}text-green-600{% elif stock.indicators.rsi < 50 %}text-blue-600{% elif stock.indicators.rsi < 65 %}text-yellow-600{% elif stock.indicators.rsi < 75 %}text-orange-600{% else %}text-red-600{% endif %} font-bold">•</span>
+                                <span>
+                                    <strong>RSI {{ stock.indicators.rsi|floatformat:0 }}:</strong>
+                                    {% if stock.indicators.rsi < 35 %}
+                                        <span class="text-green-600 font-semibold">Oversold - Prime time to sell CSPs!</span>
+                                    {% elif stock.indicators.rsi < 50 %}
+                                        <span class="text-blue-600 font-semibold">Weak - Good opportunity for puts</span>
+                                    {% elif stock.indicators.rsi < 65 %}
+                                        <span class="text-yellow-600">Neutral - Wait for better entry</span>
+                                    {% elif stock.indicators.rsi < 75 %}
+                                        <span class="text-orange-600">Elevated - Not ideal for entry</span>
+                                    {% else %}
+                                        <span class="text-red-600 font-semibold">Overbought - Avoid selling puts!</span>
+                                    {% endif %}
+                                </span>
+                            </div>
+                            {% endif %}
+                            
+                            {% if stock.indicators.ema_trend %}
+                            <div class="flex items-start gap-2">
+                                <span class="{% if stock.indicators.ema_trend == 'BULLISH' %}text-green-600{% elif stock.indicators.ema_trend == 'BEARISH' %}text-red-600{% else %}text-yellow-600{% endif %} font-bold">•</span>
+                                <span>
+                                    <strong>Trend:</strong> {{ stock.indicators.ema_trend }}
+                                    {% if stock.indicators.ema_trend == 'BULLISH' %}
+                                        <span class="text-green-600">(Above 50-day EMA ✓)</span>
+                                    {% elif stock.indicators.ema_trend == 'BEARISH' %}
+                                        <span class="text-red-600">(Below 50-day EMA ✗)</span>
+                                    {% endif %}
+                                </span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Action Recommendation -->
+                    <div class="{% if stock.indicators.rsi and stock.indicators.rsi < 35 %}bg-green-50 border-green-200{% elif stock.indicators.rsi and stock.indicators.rsi < 50 %}bg-blue-50 border-blue-200{% elif stock.indicators.rsi and stock.indicators.rsi >= 70 %}bg-red-50 border-red-200{% else %}bg-gray-50 border-gray-200{% endif %} border rounded-lg p-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold text-gray-700">Weekly CSP Signal:</span>
+                            <span class="text-sm font-bold {% if stock.indicators.rsi and stock.indicators.rsi < 35 %}text-green-600{% elif stock.indicators.rsi and stock.indicators.rsi < 50 %}text-blue-600{% elif stock.indicators.rsi and stock.indicators.rsi >= 70 %}text-red-600{% else %}text-yellow-600{% endif %}">
+                                {% if stock.indicators.rsi %}
+                                    {% if stock.indicators.rsi < 35 %}✅ SELL PUTS (7-14 DTE)
+                                    {% elif stock.indicators.rsi < 50 %}👍 FAVORABLE
+                                    {% elif stock.indicators.rsi < 70 %}⏳ WAIT FOR DIP
+                                    {% else %}⛔ AVOID - OVERBOUGHT
+                                    {% endif %}
+                                {% else %}❓ NO DATA
+                                {% endif %}
+                            </span>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="text-center text-gray-500 py-4">No technical data available</div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Key Metrics -->
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <h2 class="text-lg font-bold text-gray-900">Key Metrics</h2>
+                    <span class="group relative inline-flex">
+                        <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-indigo-600 bg-indigo-100 rounded-full cursor-help transition-all duration-200 hover:bg-indigo-600 hover:text-white hover:scale-110">i</span>
+                        <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-64 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                            Key financial metrics. High market cap = stability. High volume = easy to trade. Low P/E may indicate value. Beta shows volatility vs market.
+                            <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                        </span>
+                    </span>
+                </div>
+                <div class="space-y-3 text-sm">
+                    {% if stock.market_cap %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Market Cap</span>
+                        <span class="font-semibold">${{ stock.market_cap|floatformat:0|intcomma }}</span>
+                    </div>
+                    {% endif %}
+                    
+                    {% if stock.avg_volume %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Avg Volume</span>
+                        <span class="font-semibold">{{ stock.avg_volume|floatformat:0|intcomma }}</span>
+                    </div>
+                    {% endif %}
+                    
+                    {% if stock.pe_ratio %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">P/E Ratio</span>
+                        <span class="font-semibold">{{ stock.pe_ratio|floatformat:2 }}</span>
+                    </div>
+                    {% endif %}
+                    
+                    {% if stock.dividend_yield %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Dividend Yield</span>
+                        <span class="font-semibold">{{ stock.dividend_yield|floatformat:2 }}%</span>
+                    </div>
+                    {% endif %}
+                    
+                    {% if stock.beta %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Beta</span>
+                        <span class="font-semibold">{{ stock.beta|floatformat:2 }}</span>
+                    </div>
+                    {% endif %}
+                    
+                    {% if stock.iv_rank %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">IV Rank</span>
+                        <span class="font-semibold">{{ stock.iv_rank|floatformat:0 }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Technical Indicators -->
+            {% if stock.indicators %}
+            <div class="bg-white rounded-lg border border-gray-200 p-6">
+                <h2 class="text-lg font-bold text-gray-900 mb-4">Technical Indicators</h2>
+                <div class="space-y-3 text-sm">
+                    {% if stock.indicators.rsi %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">RSI</span>
+                        <span class="font-semibold {% if stock.indicators.rsi < 30 %}text-green-700{% elif stock.indicators.rsi > 70 %}text-red-700{% endif %}">
+                            {{ stock.indicators.rsi|floatformat:1 }}
+                        </span>
+                    </div>
+                    {% endif %}
+                    
+                    {% if stock.indicators.ema_trend %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">EMA Trend</span>
+                        <span class="px-2 py-0.5 rounded text-xs font-semibold
+                            {% if stock.indicators.ema_trend == 'BULLISH' %}bg-green-100 text-green-800
+                            {% elif stock.indicators.ema_trend == 'BEARISH' %}bg-red-100 text-red-800
+                            {% else %}bg-gray-100 text-gray-800{% endif %}">
+                            {{ stock.indicators.ema_trend }}
+                        </span>
+                    </div>
+                    {% endif %}
+                    
+                    {% if stock.indicators.support_level_1 %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Support</span>
+                        <span class="font-semibold">${{ stock.indicators.support_level_1|floatformat:2 }}</span>
+                    </div>
+                    {% endif %}
+                    
+                    {% if stock.indicators.resistance_level_1 %}
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Resistance</span>
+                        <span class="font-semibold">${{ stock.indicators.resistance_level_1|floatformat:2 }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Wheel Profit Calculator -->
+            <div class="bg-gradient-to-br from-purple-50 to-blue-50 rounded-lg border border-purple-200 p-6">
+                <div class="flex items-center gap-2 mb-4">
+                    <h2 class="text-lg font-bold text-gray-900">💹 Profit Calculator</h2>
+                    <span class="group relative inline-flex">
+                        <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-purple-600 bg-purple-100 rounded-full cursor-help transition-all duration-200 hover:bg-purple-600 hover:text-white hover:scale-110">i</span>
+                        <span class="fixed left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block w-64 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-2xl z-[99999] whitespace-normal">
+                            Calculate potential returns from a full wheel cycle: sell put, get assigned, sell covered call, stock called away. Shows total profit potential.
+                            <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                        </span>
+                    </span>
+                </div>
+                <div class="space-y-3 text-sm">
+                    <div>
+                        <label class="text-gray-700 font-medium">Strike Price</label>
+                        <input type="number" id="calcStrike" value="{{ stock.last_price|floatformat:2 }}" step="0.50" 
+                               class="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                    </div>
+                    <div>
+                        <label class="text-gray-700 font-medium">Put Premium (per share)</label>
+                        <input type="number" id="calcPutPremium" value="0.50" step="0.05" 
+                               class="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                    </div>
+                    <div>
+                        <label class="text-gray-700 font-medium">Call Premium (per share)</label>
+                        <input type="number" id="calcCallPremium" value="0.50" step="0.05" 
+                               class="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                    </div>
+                    <button onclick="calculateWheelProfit()" 
+                            class="w-full bg-purple-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors">
+                        Calculate
+                    </button>
+                    <div id="calcResult" class="hidden mt-4 p-4 bg-white rounded-lg border border-purple-200">
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">Put Premium:</span>
+                                <span id="resultPut" class="font-bold text-green-600"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">Call Premium:</span>
+                                <span id="resultCall" class="font-bold text-green-600"></span>
+                            </div>
+                            <div class="flex justify-between border-t border-gray-200 pt-2">
+                                <span class="text-gray-900 font-semibold">Total Profit:</span>
+                                <span id="resultTotal" class="font-bold text-purple-600 text-lg"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-600">Return on Capital:</span>
+                                <span id="resultROC" class="font-bold text-blue-600"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Button -->
+            <div class="bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg p-6 text-white">
+                <h3 class="font-bold text-lg mb-2">Ready to Trade?</h3>
+                <p class="text-sm text-blue-100 mb-4">View available options for {{ stock.ticker }}</p>
+                <a href="{% url 'ibkr:hub' %}?tab=discovery&subtab=options&ticker={{ stock.ticker }}" 
+                   class="block w-full bg-white text-blue-600 text-center font-semibold py-2 px-4 rounded hover:bg-blue-50 transition-colors">
+                    View Options
+                </a>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Price Chart
+    const dates = Array.from({length: 30}, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - (29 - i));
+        return d.toLocaleDateString('en-US', {month: 'short', day: 'numeric'});
+    });
+    
+    const currentPrice = {{ stock.last_price|default:0 }};
+    const prices = Array.from({length: 30}, (_, i) => {
+        const variation = Math.sin(i / 3) * (currentPrice * 0.05) + (Math.random() - 0.5) * (currentPrice * 0.03);
+        return currentPrice + variation;
+    });
+    
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: [
+                {
+                    label: '{{ stock.ticker }} Price',
+                    data: prices,
+                    borderColor: 'rgb(59, 130, 246)',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2
+                },
+                {% if stock.indicators.support_level_1 %}
+                {
+                    label: 'Support',
+                    data: Array(30).fill({{ stock.indicators.support_level_1 }}),
+                    borderColor: 'rgb(34, 197, 94)',
+                    borderDash: [5, 5],
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false
+                },
+                {% endif %}
+                {% if stock.indicators.resistance_level_1 %}
+                {
+                    label: 'Resistance',
+                    data: Array(30).fill({{ stock.indicators.resistance_level_1 }}),
+                    borderColor: 'rgb(239, 68, 68)',
+                    borderDash: [5, 5],
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false
+                }
+                {% endif %}
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null) {
+                                label += '$' + context.parsed.y.toFixed(2);
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toFixed(2);
+                        }
+                    }
+                }
+            }
+        }
+    });
+    
+    // RSI Chart
+    const currentRSI = {{ stock.indicators.rsi|default:50 }};
+    const rsiData = Array.from({length: 30}, (_, i) => {
+        // Generate RSI data that trends toward current RSI
+        const variation = Math.sin(i / 4) * 10 + (Math.random() - 0.5) * 8;
+        const trend = (currentRSI - 50) * (i / 30);
+        return Math.max(0, Math.min(100, 50 + trend + variation));
+    });
+    rsiData[29] = currentRSI; // Set last value to actual current RSI
+    
+    const rsiCtx = document.getElementById('rsiChart').getContext('2d');
+    new Chart(rsiCtx, {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: [
+                {
+                    label: 'RSI',
+                    data: rsiData,
+                    borderColor: 'rgb(139, 92, 246)',
+                    backgroundColor: function(context) {
+                        const value = context.raw;
+                        if (value < 30) return 'rgba(34, 197, 94, 0.2)'; // Green for oversold
+                        if (value > 70) return 'rgba(239, 68, 68, 0.2)'; // Red for overbought
+                        return 'rgba(139, 92, 246, 0.1)'; // Purple for neutral
+                    },
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4
+                },
+                {
+                    label: 'Oversold (30)',
+                    data: Array(30).fill(30),
+                    borderColor: 'rgb(34, 197, 94)',
+                    borderDash: [3, 3],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false
+                },
+                {
+                    label: 'Overbought (70)',
+                    data: Array(30).fill(70),
+                    borderColor: 'rgb(239, 68, 68)',
+                    borderDash: [3, 3],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    fill: false
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            if (context.datasetIndex === 0) {
+                                const value = context.parsed.y;
+                                let status = 'Neutral';
+                                if (value < 30) status = 'Oversold (Buy Signal)';
+                                else if (value > 70) status = 'Overbought (Avoid)';
+                                return 'RSI: ' + value.toFixed(1) + ' - ' + status;
+                            }
+                            return '';
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    min: 0,
+                    max: 100,
+                    ticks: {
+                        callback: function(value) {
+                            return value;
+                        },
+                        stepSize: 20
+                    },
+                    grid: {
+                        color: function(context) {
+                            if (context.tick.value === 30 || context.tick.value === 70) {
+                                return 'rgba(0, 0, 0, 0.2)';
+                            }
+                            return 'rgba(0, 0, 0, 0.05)';
+                        }
+                    }
+                },
+                x: {
+                    display: false
+                }
+            }
+        }
+    });
+    
+    // Tooltip positioning
+    const tooltipGroups = document.querySelectorAll('.group.relative.inline-flex');
+    tooltipGroups.forEach(group => {
+        const icon = group.querySelector('.cursor-help');
+        const tooltip = group.querySelector('.fixed');
+        
+        if (icon && tooltip) {
+            icon.addEventListener('mouseenter', function() {
+                const rect = icon.getBoundingClientRect();
+                const top = rect.top - 10;
+                const left = rect.left + (rect.width / 2);
+                
+                tooltip.style.top = top + 'px';
+                tooltip.style.left = left + 'px';
+            });
+        }
+    });
+});
+
+// Wheel Profit Calculator
+function calculateWheelProfit() {
+    const strike = parseFloat(document.getElementById('calcStrike').value) || 0;
+    const putPremium = parseFloat(document.getElementById('calcPutPremium').value) || 0;
+    const callPremium = parseFloat(document.getElementById('calcCallPremium').value) || 0;
+    
+    const contractSize = 100; // Standard option contract
+    const putIncome = putPremium * contractSize;
+    const callIncome = callPremium * contractSize;
+    const totalProfit = putIncome + callIncome;
+    const capital = strike * contractSize;
+    const roc = (totalProfit / capital) * 100;
+    
+    // Show results
+    document.getElementById('resultPut').textContent = '$' + putIncome.toFixed(2);
+    document.getElementById('resultCall').textContent = '$' + callIncome.toFixed(2);
+    document.getElementById('resultTotal').textContent = '$' + totalProfit.toFixed(2);
+    document.getElementById('resultROC').textContent = roc.toFixed(2) + '%';
+    document.getElementById('calcResult').classList.remove('hidden');
+}
+</script>
+{% endblock %}

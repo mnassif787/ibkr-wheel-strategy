@@ -1,0 +1,72 @@
+services:
+  web:
+    build: .
+    container_name: ibkr-wheel-django
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    env_file:
+      - .env
+    depends_on:
+      - ib-gateway
+    environment:
+      - IBKR_HOST=ib-gateway
+      - IBKR_PORT=8888
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - ALLOWED_HOSTS=*
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 300 --access-logfile - --error-logfile - config.wsgi:application"
+    restart: unless-stopped
+    networks:
+      - ibkr-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  ib-gateway:
+    image: ghcr.io/extrange/ibkr:stable
+    container_name: ib-gateway
+    ports:
+      - "6080:6080"  # noVNC browser - open http://localhost:6080 to login manually
+      - "8888:8888"  # TWS API access
+    ulimits:
+      nofile: 10000
+    environment:
+      # Dummy credentials so IBC doesn't use default edemo account
+      # Log in manually via noVNC at http://localhost:6080
+      - USERNAME=MANUAL_LOGIN
+      - PASSWORD=MANUAL_LOGIN
+      - IBC_TradingMode=paper
+      - GATEWAY_OR_TWS=gateway
+      - TWOFA_TIMEOUT_ACTION=restart
+      # Accept incoming API connections automatically (fixes disconnection + enables trading)
+      - IBC_AcceptIncomingConnectionAction=accept
+      # Allow API clients to submit orders (not read-only)
+      - IBC_ReadOnlyApi=no
+      # Keep connection alive
+      - IBC_ExistingSessionDetectedAction=primary
+    restart: unless-stopped
+    networks:
+      - ibkr-network
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -an | grep 8888 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+networks:
+  ibkr-network:
+    driver: bridge
+
+volumes:
+  static_volume:
+  media_volume:

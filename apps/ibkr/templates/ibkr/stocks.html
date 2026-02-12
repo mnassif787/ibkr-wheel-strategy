@@ -1,0 +1,786 @@
+{% extends 'base.html' %}
+{% load wheel_filters %}
+
+{% block title %}Stocks - IBKR Wheel Strategy{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Last Sync & Refresh Bar -->
+    <div class="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4 mb-4">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                {% if stocks.0.last_updated %}
+                {% with status=stocks.0.last_updated|connection_status %}
+                <div class="flex items-center">
+                    <span class="mr-2">
+                        {% if status == 'live' %}
+                        <span class="flex h-3 w-3 relative">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                        </span>
+                        {% elif status == 'delayed' %}
+                        <span class="inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
+                        {% else %}
+                        <span class="inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                        {% endif %}
+                    </span>
+                    <span class="text-sm font-semibold
+                        {% if status == 'live' %}text-green-700
+                        {% elif status == 'delayed' %}text-yellow-700
+                        {% else %}text-red-700{% endif %}">
+                        {% if status == 'live' %}🟢 LIVE DATA
+                        {% elif status == 'delayed' %}🟡 DELAYED
+                        {% else %}🔴 DISCONNECTED{% endif %}
+                    </span>
+                </div>
+                <div class="text-sm text-gray-700">
+                    Last synced: <strong>{{ stocks.0.last_updated|date:"m/d/Y H:i" }}</strong>
+                    <span class="text-xs text-gray-500">({{ stocks.0.last_updated|time_since_update }})</span>
+                </div>
+                {% endwith %}
+                {% else %}
+                <div class="text-sm text-gray-500">No sync data available</div>
+                {% endif %}
+            </div>
+            <div class="flex items-center space-x-2">
+                <div id="autoRefreshContainer"></div>
+                <a href="{% url 'ibkr:watchlist_refresh' %}" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm">
+                    🔄 Refresh All Data
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-3xl font-bold text-gray-900">🎯 Wheel Strategy Stock Screener</h1>
+        <a href="{% url 'ibkr:dashboard' %}" class="text-blue-600 hover:text-blue-800">← Back to Dashboard</a>
+    </div>
+
+    <!-- Limited Stocks Notice -->
+    {% if stocks|length < 20 %}
+    <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
+        <div class="flex items-start">
+            <div class="flex-shrink-0">
+                <span class="text-2xl">ℹ️</span>
+            </div>
+            <div class="ml-3 flex-1">
+                <h3 class="text-sm font-semibold text-yellow-800">
+                    Limited Stock Coverage ({{ stocks|length }} stocks in database)
+                </h3>
+                <p class="mt-2 text-sm text-yellow-700">
+                    You're currently scanning {{ stocks|length }} stocks. Add more stocks from major indices to get better screening results.
+                </p>
+                <div class="mt-3">
+                    <button onclick="document.getElementById('addStocksInstructions').classList.toggle('hidden')" 
+                            class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-semibold text-sm">
+                        📈 How to Add More Stocks
+                    </button>
+                </div>
+                <div id="addStocksInstructions" class="hidden mt-4 p-4 bg-white rounded border border-yellow-300">
+                    <p class="text-sm text-gray-700 font-semibold mb-2">Run one of these commands in your terminal:</p>
+                    <div class="space-y-2 text-sm">
+                        <div class="bg-gray-900 text-green-400 p-2 rounded font-mono">
+                            python manage.py discover_stocks --preset=popular --limit=50
+                        </div>
+                        <p class="text-xs text-gray-600 ml-2">Adds 50 popular wheel strategy stocks (recommended)</p>
+                        
+                        <div class="bg-gray-900 text-green-400 p-2 rounded font-mono">
+                            python manage.py discover_stocks --preset=sp500 --limit=100
+                        </div>
+                        <p class="text-xs text-gray-600 ml-2">Adds top 100 S&P 500 stocks</p>
+                        
+                        <div class="bg-gray-900 text-green-400 p-2 rounded font-mono">
+                            python manage.py discover_stocks --preset=tech --limit=30
+                        </div>
+                        <p class="text-xs text-gray-600 ml-2">Adds 30 technology stocks</p>
+                    </div>
+                    <p class="text-sm text-gray-700 mt-4 font-semibold">After adding stocks, run:</p>
+                    <div class="space-y-2 text-sm">
+                        <div class="bg-gray-900 text-green-400 p-2 rounded font-mono">
+                            python manage.py calculate_indicators
+                        </div>
+                        <div class="bg-gray-900 text-green-400 p-2 rounded font-mono">
+                            python manage.py sync_yfinance_options
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Screener Controls -->
+    <div class="bg-gradient-to-r from-purple-50 via-pink-50 to-blue-50 border-2 border-purple-300 rounded-lg p-6 mb-6 shadow-md">
+        <form method="get" action="{% url 'ibkr:stocks' %}" class="space-y-4">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-purple-900">📊 Multi-Factor Screener</h2>
+                <a href="{% url 'ibkr:export_wheel_scores' %}?limit=10" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold text-sm flex items-center space-x-2">
+                    <span>📥</span>
+                    <span>Export Top 10 CSV</span>
+                </a>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Sort By -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Sort By</label>
+                    <select name="sort" onchange="this.form.submit()" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                        <option value="wheel_score" {% if sort_by == 'wheel_score' %}selected{% endif %}>🎯 Blended Score</option>
+                        <option value="entry_signal" {% if sort_by == 'entry_signal' %}selected{% endif %}>🎬 Entry Signal</option>
+                        <option value="volatility" {% if sort_by == 'volatility' %}selected{% endif %}>🎢 Volatility</option>
+                        <option value="liquidity" {% if sort_by == 'liquidity' %}selected{% endif %}>💧 Liquidity</option>
+                        <option value="technical" {% if sort_by == 'technical' %}selected{% endif %}>📊 Technical</option>
+                        <option value="stability" {% if sort_by == 'stability' %}selected{% endif %}>🛡️ Stability</option>
+                        <option value="price" {% if sort_by == 'price' %}selected{% endif %}>💰 Price</option>
+                    </select>
+                </div>
+
+                <!-- Grade Filter -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Grade Filter</label>
+                    <select name="grade" onchange="this.form.submit()" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                        <option value="all" {% if grade_filter == 'all' %}selected{% endif %}>All Grades</option>
+                        <option value="A" {% if grade_filter == 'A' %}selected{% endif %}>A - Excellent (80+)</option>
+                        <option value="B" {% if grade_filter == 'B' %}selected{% endif %}>B - Good (65+)</option>
+                        <option value="C" {% if grade_filter == 'C' %}selected{% endif %}>C - Fair (50+)</option>
+                        <option value="D" {% if grade_filter == 'D' %}selected{% endif %}>D - Poor (&lt;50)</option>
+                    </select>
+                </div>
+
+                <!-- Price Range Filter -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Price Range</label>
+                    <select name="price_range" onchange="this.form.submit()" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                        <option value="all" {% if price_range == 'all' %}selected{% endif %}>All Prices</option>
+                        <option value="sweet_spot" {% if price_range == 'sweet_spot' %}selected{% endif %}>Sweet Spot ($10-$50)</option>
+                        <option value="under_50" {% if price_range == 'under_50' %}selected{% endif %}>Under $50</option>
+                        <option value="over_100" {% if price_range == 'over_100' %}selected{% endif %}>Over $100</option>
+                    </select>
+                </div>
+
+                <!-- Min Score Filter -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Minimum Score</label>
+                    <select name="min_score" onchange="this.form.submit()" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                        <option value="0" {% if min_score == '0' or not min_score %}selected{% endif %}>No Minimum</option>
+                        <option value="50" {% if min_score == '50' %}selected{% endif %}>50+</option>
+                        <option value="65" {% if min_score == '65' %}selected{% endif %}>65+</option>
+                        <option value="80" {% if min_score == '80' %}selected{% endif %}>80+</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+                <div class="text-sm text-gray-600">
+                    <span class="font-semibold">{{ stocks|length }}</span> stocks match your criteria
+                </div>
+                <a href="{% url 'ibkr:stocks' %}" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 font-semibold text-sm">
+                    Clear Filters
+                </a>
+            </div>
+        </form>
+    </div>
+    
+    {% if stocks %}
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ticker</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">🎯 Wheel Score</th>
+                    <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">🎬 Entry Signal</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">RSI</th>
+                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">EMA Trend</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Support</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Resistance</th>
+                    <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+                {% for stock in stocks %}
+                <tr class="hover:bg-gray-50" 
+                    data-score="{{ stock.wheel_score }}"
+                    data-grade="{{ stock.score_breakdown.grade }}"
+                    data-volatility="{{ stock.score_breakdown.volatility_score }}"
+                    data-liquidity="{{ stock.score_breakdown.liquidity_score }}"
+                    data-technical="{{ stock.score_breakdown.technical_score }}"
+                    data-stability="{{ stock.score_breakdown.stability_score }}"
+                    data-price="{{ stock.score_breakdown.price_score }}">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="text-sm font-bold text-blue-600">{{ stock.ticker }}</span>
+                    </td>
+                    <td class="px-4 py-4 whitespace-nowrap">
+                        <div class="flex flex-col items-center space-y-1">
+                            <div class="flex items-center space-x-2">
+                                <span class="px-3 py-1 rounded-full text-lg font-bold
+                                    {% if stock.score_breakdown.grade == 'A' %}bg-green-500 text-white
+                                    {% elif stock.score_breakdown.grade == 'B' %}bg-blue-500 text-white
+                                    {% elif stock.score_breakdown.grade == 'C' %}bg-yellow-500 text-white
+                                    {% else %}bg-red-500 text-white{% endif %}">
+                                    {{ stock.score_breakdown.grade }}
+                                </span>
+                                <div class="text-center">
+                                    <div class="text-lg font-bold text-gray-900">{{ stock.wheel_score }}</div>
+                                    <div class="text-xs text-gray-500">/100</div>
+                                </div>
+                                {% if stock.score_trend == 'improving' %}
+                                <span class="text-green-600" title="Improving">↗️</span>
+                                {% elif stock.score_trend == 'declining' %}
+                                <span class="text-red-600" title="Declining">↘️</span>
+                                {% else %}
+                                <span class="text-gray-400" title="Stable">→</span>
+                                {% endif %}
+                            </div>
+                            <div class="w-24 bg-gray-200 rounded-full h-2">
+                                <div class="h-2 rounded-full transition-all {% if stock.score_breakdown.grade == 'A' %}bg-green-500{% elif stock.score_breakdown.grade == 'B' %}bg-blue-500{% elif stock.score_breakdown.grade == 'C' %}bg-yellow-500{% else %}bg-red-500{% endif %}" 
+                                     style="width: {{ stock.wheel_score }}%"></div>
+                            </div>
+                            <button onclick="showScoreDetails('{{ stock.ticker }}', {{ stock.wheel_score }}, '{{ stock.score_breakdown.grade }}', {{ stock.score_breakdown.volatility_score }}, {{ stock.score_breakdown.liquidity_score }}, {{ stock.score_breakdown.technical_score }}, {{ stock.score_breakdown.stability_score }}, {{ stock.score_breakdown.price_score }})" 
+                                    class="text-xs text-blue-600 hover:text-blue-800 underline">
+                                View Details
+                            </button>
+                        </div>
+                    </td>
+                    <td class="px-4 py-4 whitespace-nowrap">
+                        <div class="flex flex-col items-center space-y-1">
+                            <span class="px-3 py-2 rounded-lg text-sm font-bold text-white
+                                {% if stock.entry_color == 'green' %}bg-green-600
+                                {% elif stock.entry_color == 'blue' %}bg-blue-600
+                                {% elif stock.entry_color == 'yellow' %}bg-yellow-600
+                                {% else %}bg-red-600{% endif %}">
+                                {{ stock.entry_signal }}
+                            </span>
+                            <div class="text-xs font-semibold text-gray-700">{{ stock.entry_quality }}</div>
+                            <div class="text-lg font-bold text-gray-900">{{ stock.entry_score }}/100</div>
+                            <button onclick="showEntryDetails('{{ stock.ticker }}', '{{ stock.entry_signal }}', {{ stock.entry_score }}, '{{ stock.entry_quality }}', {{ stock.entry_reasons|safe|escapejs }})" 
+                                    class="text-xs text-purple-600 hover:text-purple-800 underline">
+                                Why?
+                            </button>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-900">{{ stock.name|default:"—" }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        {% if stock.last_price %}${{ stock.last_price|floatformat:2 }}{% else %}—{% endif %}
+                    </td>
+                    
+                    <!-- RSI with color coding -->
+                    <td class="px-6 py-4 whitespace-nowrap text-right">
+                        {% if stock.indicators %}
+                            <div class="text-sm font-medium
+                            {% if stock.indicators.rsi < 30 %}text-green-600
+                            {% elif stock.indicators.rsi > 70 %}text-red-600
+                            {% else %}text-gray-600{% endif %}">
+                                {{ stock.indicators.rsi|floatformat:1 }}
+                            </div>
+                            <div class="text-xs
+                            {% if stock.indicators.rsi_signal == 'OVERSOLD' %}text-green-600
+                            {% elif stock.indicators.rsi_signal == 'OVERBOUGHT' %}text-red-600
+                            {% else %}text-gray-500{% endif %}">
+                                {{ stock.indicators.rsi_signal }}
+                            </div>
+                        {% else %}
+                            <span class="text-xs text-gray-400">Calculate needed</span>
+                        {% endif %}
+                    </td>
+                    
+                    <!-- EMA Trend -->
+                    <td class="px-6 py-4 whitespace-nowrap text-center">
+                        {% if stock.indicators %}
+                            <div>
+                                <span class="px-2 py-1 text-xs rounded-full font-medium
+                                {% if stock.indicators.ema_trend == 'BULLISH' %}bg-green-100 text-green-800
+                                {% elif stock.indicators.ema_trend == 'BEARISH' %}bg-red-100 text-red-800
+                                {% else %}bg-gray-100 text-gray-800{% endif %}">
+                                    {{ stock.indicators.ema_trend|default:"NEUTRAL" }}
+                                </span>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                50: ${{ stock.indicators.ema_50|floatformat:2 }}<br>
+                                200: ${{ stock.indicators.ema_200|floatformat:2 }}
+                            </div>
+                        {% else %}
+                            <span class="text-xs text-gray-400">—</span>
+                        {% endif %}
+                    </td>
+                    
+                    <!-- Support Level -->
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        {% if stock.indicators and stock.indicators.support_level_1 %}
+                            <div class="font-medium">${{ stock.indicators.support_level_1|floatformat:2 }}</div>
+                            {% if stock.indicators.near_support %}
+                                <span class="text-xs text-green-600">✓ Near support</span>
+                            {% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    
+                    <!-- Resistance Level -->
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        {% if stock.indicators and stock.indicators.resistance_level_1 %}
+                            <div class="font-medium">${{ stock.indicators.resistance_level_1|floatformat:2 }}</div>
+                            {% if stock.indicators.near_resistance %}
+                                <span class="text-xs text-orange-600">⚠ Near resistance</span>
+                            {% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    
+                    <!-- Actions -->
+                    <td class="px-6 py-4 whitespace-nowrap text-center">
+                        <a href="{% url 'ibkr:options_ticker' stock.ticker %}" 
+                           class="text-blue-600 hover:text-blue-800 text-sm font-semibold hover:underline">View Options</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- AI Analysis Section -->
+    <div class="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for stock in stocks %}
+        <div class="bg-white rounded-lg shadow-md border-2 
+                    {% if stock.ai_analysis.strategy_color == 'green' %}border-green-300
+                    {% elif stock.ai_analysis.strategy_color == 'blue' %}border-blue-300
+                    {% elif stock.ai_analysis.strategy_color == 'yellow' %}border-yellow-300
+                    {% else %}border-red-300{% endif %} p-6">
+            
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-2xl font-bold text-blue-600">{{ stock.ticker }}</h3>
+                <div class="{% if stock.ai_analysis.action == 'buy' %}bg-green-100 border-green-400{% elif stock.ai_analysis.action == 'sell' %}bg-red-100 border-red-400{% else %}bg-gray-100 border-gray-400{% endif %} border-2 rounded-lg px-3 py-1">
+                    <div class="text-xs font-semibold {% if stock.ai_analysis.action == 'buy' %}text-green-700{% elif stock.ai_analysis.action == 'sell' %}text-red-700{% else %}text-gray-700{% endif %}">SUCCESS RATE</div>
+                    <div class="text-2xl font-bold {% if stock.ai_analysis.action == 'buy' %}text-green-900{% elif stock.ai_analysis.action == 'sell' %}text-red-900{% else %}text-gray-900{% endif %}">{{ stock.ai_analysis.confidence }}%</div>
+                </div>
+            </div>
+            
+            <div class="mb-4">
+                <span class="px-4 py-2 rounded-lg text-sm font-bold text-white inline-block
+                            {% if stock.ai_analysis.action == 'buy' %}bg-green-500
+                            {% elif stock.ai_analysis.action == 'sell' %}bg-red-500
+                            {% else %}bg-gray-500{% endif %}">
+                    🤖 {{ stock.ai_analysis.recommendation }}
+                </span>
+            </div>
+            
+            <div class="mb-4">
+                <div class="w-full bg-gray-200 rounded-full h-3">
+                    <div class="h-3 rounded-full transition-all duration-500 {% if stock.ai_analysis.confidence > 70 %}bg-green-500{% elif stock.ai_analysis.confidence > 40 %}bg-yellow-500{% else %}bg-red-500{% endif %}" 
+                         style="width: {{ stock.ai_analysis.confidence }}%"></div>
+                </div>
+                <div class="flex justify-between items-center mt-1">
+                    <span class="text-xs text-gray-500">Confidence Level</span>
+                    <span class="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-1 rounded">{{ stock.ai_analysis.confidence }}%</span>
+                </div>
+            </div>
+            
+            <div class="mb-4 bg-white bg-opacity-60 rounded-lg p-3 border-2 {% if stock.ai_analysis.action == 'buy' %}border-green-200{% elif stock.ai_analysis.action == 'sell' %}border-red-200{% else %}border-gray-200{% endif %}">
+                <div class="text-xs font-bold text-gray-700 mb-1">📋 WHY THIS RECOMMENDATION:</div>
+                <p class="text-sm {% if stock.ai_analysis.action == 'buy' %}text-green-800{% elif stock.ai_analysis.action == 'sell' %}text-red-800{% else %}text-gray-800{% endif %}">
+                    {{ stock.ai_analysis.reasoning }}
+                </p>
+            </div>
+            
+            <div class="mb-4">
+                <div class="text-sm font-semibold mb-2 flex items-center justify-between">
+                    <span>Wheel Strategy Rating</span>
+                    <span class="px-2 py-1 rounded text-xs
+                                {% if stock.ai_analysis.strategy_color == 'green' %}bg-green-100 text-green-800
+                                {% elif stock.ai_analysis.strategy_color == 'blue' %}bg-blue-100 text-blue-800
+                                {% elif stock.ai_analysis.strategy_color == 'yellow' %}bg-yellow-100 text-yellow-800
+                                {% else %}bg-red-100 text-red-800{% endif %}">
+                        {{ stock.ai_analysis.strategy_rating }}
+                    </span>
+                </div>
+                <div class="space-y-1">
+                    {% for signal in stock.ai_analysis.wheel_signals %}
+                    <p class="text-xs text-gray-600">{{ signal }}</p>
+                    {% endfor %}
+                </div>
+            </div>
+            
+            <div class="mb-4">
+                <p class="text-xs font-semibold text-gray-700 mb-2">Technical Signals:</p>
+                <div class="space-y-1">
+                    {% for signal in stock.ai_analysis.signals %}
+                    <p class="text-xs text-gray-600">{{ signal }}</p>
+                    {% endfor %}
+                </div>
+            </div>
+            
+            <a href="{% url 'ibkr:options_ticker' stock.ticker %}" 
+               class="block w-full text-center bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 font-medium text-sm">
+                View Options Chain →
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Legend -->
+    <div class="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-blue-900 mb-2">📊 Technical Indicators Guide</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-blue-800">
+            <div>
+                <strong>RSI (Relative Strength Index):</strong>
+                <ul class="mt-1 ml-4 list-disc">
+                    <li><span class="text-green-600">Below 30:</span> Oversold (Buy signal)</li>
+                    <li><span class="text-red-600">Above 70:</span> Overbought (Sell signal)</li>
+                    <li>30-70: Neutral</li>
+                </ul>
+            </div>
+            <div>
+                <strong>EMA Trend:</strong>
+                <ul class="mt-1 ml-4 list-disc">
+                    <li><span class="text-green-600">BULLISH:</span> EMA 50 > EMA 200</li>
+                    <li><span class="text-red-600">BEARISH:</span> EMA 50 < EMA 200</li>
+                    <li>NEUTRAL: No clear trend</li>
+                </ul>
+            </div>
+            <div>
+                <strong>Bollinger Bands:</strong>
+                <ul class="mt-1 ml-4 list-disc">
+                    <li><span class="text-green-600">BELOW_LOWER:</span> Potentially oversold</li>
+                    <li><span class="text-red-600">ABOVE_UPPER:</span> Potentially overbought</li>
+                    <li>MIDDLE: In normal range</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    {% else %}
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+        <p class="text-gray-500 text-lg mb-4">No stocks found</p>
+        <p class="text-gray-400 text-sm">Add tickers to your watchlist to get started!</p>
+        <a href="{% url 'ibkr:dashboard' %}" class="inline-block mt-4 text-blue-600 hover:text-blue-800">
+            Go to Dashboard →
+        </a>
+    </div>
+    {% endif %}
+
+    <!-- Score Breakdown Modal -->
+    <div id="scoreModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div class="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 rounded-t-lg">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-2xl font-bold" id="modalTicker">Stock Name</h3>
+                        <p class="text-purple-100 mt-1">Wheel Strategy Score Breakdown</p>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <div class="text-center">
+                            <div class="text-xs text-purple-200">GRADE</div>
+                            <div class="text-4xl font-bold" id="modalGrade">A</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-xs text-purple-200">TOTAL</div>
+                            <div class="text-4xl font-bold" id="modalTotal">85</div>
+                            <div class="text-xs text-purple-200">/100</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <!-- Volatility Score -->
+                    <div class="bg-gradient-to-br from-red-50 to-orange-50 border-2 border-red-200 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-2xl">🎢</span>
+                                <span class="font-bold text-gray-900">Volatility</span>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-2xl font-bold text-red-700" id="modalVolatility">20</div>
+                                <div class="text-xs text-gray-600">/25 (25%)</div>
+                            </div>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3 mb-2">
+                            <div class="bg-red-500 h-3 rounded-full transition-all" id="modalVolatilityBar" style="width: 80%"></div>
+                        </div>
+                        <p class="text-xs text-gray-700">Higher implied volatility means better premiums for selling puts</p>
+                    </div>
+
+                    <!-- Liquidity Score -->
+                    <div class="bg-gradient-to-br from-blue-50 to-cyan-50 border-2 border-blue-200 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-2xl">💧</span>
+                                <span class="font-bold text-gray-900">Liquidity</span>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-2xl font-bold text-blue-700" id="modalLiquidity">15</div>
+                                <div class="text-xs text-gray-600">/20 (20%)</div>
+                            </div>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3 mb-2">
+                            <div class="bg-blue-500 h-3 rounded-full transition-all" id="modalLiquidityBar" style="width: 75%"></div>
+                        </div>
+                        <p class="text-xs text-gray-700">High volume and options open interest ensure tight spreads</p>
+                    </div>
+
+                    <!-- Technical Score -->
+                    <div class="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-2xl">📊</span>
+                                <span class="font-bold text-gray-900">Technical</span>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-2xl font-bold text-green-700" id="modalTechnical">18</div>
+                                <div class="text-xs text-gray-600">/25 (25%)</div>
+                            </div>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3 mb-2">
+                            <div class="bg-green-500 h-3 rounded-full transition-all" id="modalTechnicalBar" style="width: 72%"></div>
+                        </div>
+                        <p class="text-xs text-gray-700">RSI, trend direction, and proximity to support levels</p>
+                    </div>
+
+                    <!-- Stability Score -->
+                    <div class="bg-gradient-to-br from-purple-50 to-indigo-50 border-2 border-purple-200 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-2xl">🛡️</span>
+                                <span class="font-bold text-gray-900">Stability</span>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-2xl font-bold text-purple-700" id="modalStability">16</div>
+                                <div class="text-xs text-gray-600">/20 (20%)</div>
+                            </div>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3 mb-2">
+                            <div class="bg-purple-500 h-3 rounded-full transition-all" id="modalStabilityBar" style="width: 80%"></div>
+                        </div>
+                        <p class="text-xs text-gray-700">Market cap, beta, and dividend yield indicate stability</p>
+                    </div>
+
+                    <!-- Price Level Score -->
+                    <div class="bg-gradient-to-br from-yellow-50 to-amber-50 border-2 border-yellow-200 rounded-lg p-4 md:col-span-2">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-2xl">💰</span>
+                                <span class="font-bold text-gray-900">Price Level</span>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-2xl font-bold text-yellow-700" id="modalPrice">8</div>
+                                <div class="text-xs text-gray-600">/10 (10%)</div>
+                            </div>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3 mb-2">
+                            <div class="bg-yellow-500 h-3 rounded-full transition-all" id="modalPriceBar" style="width: 80%"></div>
+                        </div>
+                        <p class="text-xs text-gray-700">Affordability for cash-secured puts (sweet spot: $10-$50)</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between pt-4 border-t">
+                    <button onclick="closeScoreModal()" class="px-6 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 font-semibold">
+                        Close
+                    </button>
+                    <a id="modalViewOptions" href="#" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
+                        View Options Chain →
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showScoreDetails(ticker, totalScore, grade, volatility, liquidity, technical, stability, price) {
+    // Update modal content
+    document.getElementById('modalTicker').textContent = ticker;
+    document.getElementById('modalTotal').textContent = totalScore;
+    document.getElementById('modalGrade').textContent = grade;
+    
+    document.getElementById('modalVolatility').textContent = Math.round(volatility);
+    document.getElementById('modalVolatilityBar').style.width = ((volatility / 25) * 100) + '%';
+    
+    document.getElementById('modalLiquidity').textContent = Math.round(liquidity);
+    document.getElementById('modalLiquidityBar').style.width = ((liquidity / 20) * 100) + '%';
+    
+    document.getElementById('modalTechnical').textContent = Math.round(technical);
+    document.getElementById('modalTechnicalBar').style.width = ((technical / 25) * 100) + '%';
+    
+    document.getElementById('modalStability').textContent = Math.round(stability);
+    document.getElementById('modalStabilityBar').style.width = ((stability / 20) * 100) + '%';
+    
+    document.getElementById('modalPrice').textContent = Math.round(price);
+    document.getElementById('modalPriceBar').style.width = ((price / 10) * 100) + '%';
+    
+    document.getElementById('modalViewOptions').href = `/ibkr/options/${ticker}/`;
+    
+    // Show modal
+    document.getElementById('scoreModal').classList.remove('hidden');
+}
+
+function closeScoreModal() {
+    document.getElementById('scoreModal').classList.add('hidden');
+}
+
+// Close modal when clicking outside
+document.getElementById('scoreModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeScoreModal();
+    }
+});
+
+// ===== Entry Signal Modal Functions =====
+function showEntryDetails(ticker, signal, score, quality, reasonsJson) {
+    // Parse reasons array
+    let reasons = [];
+    try {
+        reasons = JSON.parse(reasonsJson);
+    } catch (e) {
+        console.error('Failed to parse reasons:', e);
+        reasons = ['Unable to load details'];
+    }
+    
+    // Update ticker
+    document.getElementById('entryModalTicker').textContent = ticker;
+    
+    // Update score
+    document.getElementById('entryModalScore').textContent = score + '/100';
+    
+    // Update signal badge with color
+    const signalBadge = document.getElementById('entryModalSignal');
+    signalBadge.textContent = signal.replace('_', ' ');
+    signalBadge.className = 'inline-block px-4 py-2 rounded-full text-sm font-bold mb-4';
+    
+    if (score >= 75) {
+        signalBadge.classList.add('bg-green-100', 'text-green-800', 'border-2', 'border-green-300');
+    } else if (score >= 60) {
+        signalBadge.classList.add('bg-blue-100', 'text-blue-800', 'border-2', 'border-blue-300');
+    } else if (score >= 45) {
+        signalBadge.classList.add('bg-yellow-100', 'text-yellow-800', 'border-2', 'border-yellow-300');
+    } else {
+        signalBadge.classList.add('bg-red-100', 'text-red-800', 'border-2', 'border-red-300');
+    }
+    
+    // Update quality
+    document.getElementById('entryModalQuality').textContent = 'Quality: ' + quality;
+    
+    // Update reasons list
+    const reasonsList = document.getElementById('entryModalReasons');
+    reasonsList.innerHTML = '';
+    reasons.forEach(reason => {
+        const li = document.createElement('li');
+        li.className = 'text-sm text-gray-700 leading-relaxed';
+        li.textContent = reason;
+        reasonsList.appendChild(li);
+    });
+    
+    // Update meaning text based on signal (WHEEL STRATEGY - PUT SELLING FOCUSED)
+    const meaningDiv = document.getElementById('entryModalMeaning');
+    if (signal.includes('SELL PUT') && score >= 75) {
+        meaningDiv.innerHTML = '<strong>🎯 Excellent Time to Sell Cash-Secured Puts:</strong> Stock is near support with favorable RSI and high IV for premium. Low risk of immediate assignment. Perfect wheel strategy entry.';
+    } else if (signal.includes('SELL PUT') && score >= 60) {
+        meaningDiv.innerHTML = '<strong>✅ Good Time to Sell Cash-Secured Puts:</strong> Several favorable conditions for selling puts. Good premium potential with reasonable assignment risk. Solid wheel strategy opportunity.';
+    } else if (signal === 'WAIT') {
+        meaningDiv.innerHTML = '<strong>⏳ Wait for Better Put-Selling Setup:</strong> Mixed conditions. Either premiums are low, stock is away from support, or RSI is unfavorable. Monitor for improvement before selling puts.';
+    } else {
+        meaningDiv.innerHTML = '<strong>🚫 Avoid Selling Puts Now:</strong> Poor conditions for put selling. Stock may be overbought, near resistance, or IV too low for decent premium. Wait for better wheel strategy entry.';
+    }
+    
+    // Update options link
+    document.getElementById('entryModalViewOptions').href = `/ibkr/options/${ticker}/`;
+    
+    // Show modal
+    document.getElementById('entryModal').classList.remove('hidden');
+}
+
+function closeEntryModal() {
+    document.getElementById('entryModal').classList.add('hidden');
+}
+
+// Close entry modal when clicking outside (wrapped in DOMContentLoaded)
+document.addEventListener('DOMContentLoaded', function() {
+    const entryModal = document.getElementById('entryModal');
+    if (entryModal) {
+        entryModal.addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeEntryModal();
+            }
+        });
+    }
+});
+</script>
+
+<!-- Entry Signal Details Modal -->
+<div id="entryModal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+    <div class="relative mx-auto p-0 border border-gray-300 shadow-2xl rounded-xl bg-white max-w-3xl w-full">
+        <!-- Header -->
+        <div class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-t-xl px-6 py-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-3xl font-bold mb-1" id="entryModalTicker">Stock</h3>
+                    <p class="text-indigo-100 text-sm">Entry Signal Analysis</p>
+                </div>
+                <div class="text-right">
+                    <div class="text-5xl font-bold" id="entryModalScore">0/100</div>
+                    <div class="text-indigo-100 text-xs mt-1">Entry Score</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div class="p-6">
+            <!-- Signal Badge -->
+            <div class="text-center mb-6">
+                <span id="entryModalSignal" class="inline-block px-4 py-2 rounded-full text-sm font-bold">
+                    WAIT
+                </span>
+                <div class="text-sm text-gray-600 mt-2" id="entryModalQuality">Quality: FAIR</div>
+            </div>
+
+            <!-- Meaning Section -->
+            <div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 rounded">
+                <div class="flex items-start">
+                    <span class="text-2xl mr-3">💡</span>
+                    <p class="text-sm text-gray-800" id="entryModalMeaning">
+                        Loading analysis...
+                    </p>
+                </div>
+            </div>
+
+            <!-- Detailed Reasons -->
+            <div class="mb-6">
+                <h4 class="text-lg font-semibold text-gray-800 mb-3 flex items-center">
+                    <span class="mr-2">📋</span>
+                    Detailed Analysis
+                </h4>
+                <div class="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
+                    <ul id="entryModalReasons" class="space-y-2 list-disc list-inside">
+                        <!-- Reasons will be populated by JavaScript -->
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center justify-between pt-4 border-t">
+                <button onclick="closeEntryModal()" class="px-6 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 font-semibold transition">
+                    Close
+                </button>
+                <a id="entryModalViewOptions" href="#" class="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold transition">
+                    View Options Chain →
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Initialize auto-refresh for stocks page
+const stocksAutoRefresh = new AutoRefresh(() => {
+    window.location.reload();
+}, {
+    interval: 120000, // 2 minutes for stocks
+    enabledByDefault: false,
+    storageKey: 'global_autoRefresh'
+});
+
+createAutoRefreshToggle(stocksAutoRefresh, 'autoRefreshContainer', {
+    label: 'Auto-Refresh',
+    icon: '🔄'
+});
+</script>
+{% endblock %}

@@ -1,0 +1,131 @@
+{% extends 'base.html' %}
+
+{% block title %}System Health Check - IBKR Wheel Strategy{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+        <div class="flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">System Health Check</h1>
+                <p class="mt-2 text-sm text-gray-600">
+                    Verifying all data sources and indicators
+                    <span class="ml-2 text-gray-400">Last checked: {{ timestamp|date:"M d, Y H:i:s" }}</span>
+                </p>
+            </div>
+            <div>
+                <a href="?refresh=true" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700">
+                    🔄 Refresh Checks
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Overall Status Card -->
+    <div class="mb-8 rounded-lg border-2 p-6 {% if overall_status == 'healthy' %}bg-green-50 border-green-200{% elif overall_status == 'warning' %}bg-yellow-50 border-yellow-200{% else %}bg-red-50 border-red-200{% endif %}">
+        <div class="flex items-center">
+            <div class="text-5xl mr-4">
+                {% if overall_status == 'healthy' %}✅{% elif overall_status == 'warning' %}⚠️{% else %}❌{% endif %}
+            </div>
+            <div>
+                <h2 class="text-2xl font-bold {% if overall_status == 'healthy' %}text-green-900{% elif overall_status == 'warning' %}text-yellow-900{% else %}text-red-900{% endif %}">
+                    {% if overall_status == 'healthy' %}
+                        All Systems Operational
+                    {% elif overall_status == 'warning' %}
+                        Some Issues Detected
+                    {% else %}
+                        Critical Issues Detected
+                    {% endif %}
+                </h2>
+                <p class="text-sm {% if overall_status == 'healthy' %}text-green-700{% elif overall_status == 'warning' %}text-yellow-700{% else %}text-red-700{% endif %}">
+                    {{ checks|length }} checks completed
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detailed Check Results -->
+    <div class="space-y-4">
+        {% for check in checks %}
+        <div class="bg-white rounded-lg shadow-sm border {% if check.status == 'passed' %}border-green-200{% elif check.status == 'warning' %}border-yellow-200{% else %}border-red-200{% endif %}">
+            <div class="p-6">
+                <div class="flex items-start">
+                    <div class="text-3xl mr-4 flex-shrink-0">{{ check.icon }}</div>
+                    
+                    <div class="flex-1">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-semibold text-gray-900">{{ check.name }}</h3>
+                            <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium
+                                {% if check.status == 'passed' %}bg-green-100 text-green-800{% elif check.status == 'warning' %}bg-yellow-100 text-yellow-800{% else %}bg-red-100 text-red-800{% endif %}">
+                                {% if check.status == 'passed' %}✅ Passed{% elif check.status == 'warning' %}⚠️ Warning{% else %}❌ Failed{% endif %}
+                            </span>
+                        </div>
+                        
+                        <p class="mt-2 text-sm text-gray-700">{{ check.message }}</p>
+                        
+                        {% if check.solution %}
+                        <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                            <div class="flex items-start">
+                                <div class="flex-shrink-0"><span class="text-lg">💡</span></div>
+                                <div class="ml-3 flex-1">
+                                    <h4 class="text-sm font-medium text-blue-900">How to fix:</h4>
+                                    <p class="mt-1 text-sm text-blue-800">{{ check.solution }}</p>
+                                    {% if check.command %}
+                                    <p class="mt-1 text-xs text-blue-600 font-mono">CLI: {{ check.command }}</p>
+                                    {% endif %}
+                                </div>
+                                {% if 'Refresh button' in check.solution %}
+                                <button onclick="window.refreshData('quick')" class="ml-4 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition whitespace-nowrap">
+                                    ⚡ Quick Refresh
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Quick Reference -->
+    <div class="mt-8 bg-gray-50 rounded-lg p-6 border border-gray-200">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">📚 Quick Reference</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+            <div>
+                <h4 class="font-medium text-gray-900 mb-2">Common Management Commands:</h4>
+                <ul class="space-y-1 text-gray-700 font-mono text-xs bg-gray-800 text-green-400 p-3 rounded">
+                    <li>$ python manage.py quick_refresh <span class="text-yellow-400"># ⚡ Fast (only stale)</span></li>
+                    <li>$ python manage.py refresh_all_data <span class="text-yellow-400"># Full refresh</span></li>
+                    <li>$ python manage.py discover_stocks</li>
+                    <li>$ python manage.py sync_yfinance_options</li>
+                    <li>$ python manage.py health_check</li>
+                </ul>
+            </div>
+            <div>
+                <h4 class="font-medium text-gray-900 mb-2">IBKR Port Configuration:</h4>
+                <ul class="space-y-1 text-gray-700">
+                    <li>📊 <strong>Paper Trading (TWS):</strong> 7497</li>
+                    <li>💰 <strong>Live Trading (TWS):</strong> 7496</li>
+                    <li>📊 <strong>Paper Trading (Gateway):</strong> 4002</li>
+                    <li>💰 <strong>Live Trading (Gateway):</strong> 4001</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
+            <h4 class="font-medium text-blue-900 mb-2">🔍 What's Being Checked:</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-blue-800">
+                <div><strong>Database:</strong> Connection, models, data counts</div>
+                <div><strong>IBKR:</strong> TWS/Gateway connectivity, API access</div>
+                <div><strong>YFinance:</strong> Stock data, historical data</div>
+                <div><strong>Indicators:</strong> RSI, EMA, Bollinger Bands, S/R</div>
+                <div><strong>Options:</strong> Options chain data availability</div>
+                <div><strong>Freshness:</strong> Data age and staleness</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

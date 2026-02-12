@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: ibkr-wheel-strategy
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: False
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: IBKR_USERNAME
+        sync: false
+      - key: IBKR_PASSWORD
+        sync: false
+      - key: IBKR_TRADING_MODE
+        value: paper
+      - key: IBKR_HOST
+        value: localhost
+      - key: IBKR_PORT
+        value: 7496

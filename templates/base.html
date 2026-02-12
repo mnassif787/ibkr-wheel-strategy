@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <base target="_self">
+    <title>{% block title %}IBKR Wheel Strategy{% endblock %}</title>
+    {% load static %}
+    <script src="{% static 'js/tailwind.js' %}"></script>
+    <script src="{% static 'js/chart.umd.min.js' %}"></script>
+    <script src="{% static 'js/auto-refresh.js' %}"></script>
+    <script>
+        // Data refresh functionality - Global scope
+        window.refreshCheckInterval = null;
+        
+        // Make getCookie globally available
+        window.getCookie = function(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        };
+        
+        window.showNotification = function(message, type = 'info') {
+            const colors = {
+                success: 'bg-green-50 border-green-200 text-green-800',
+                error: 'bg-red-50 border-red-200 text-red-800',
+                info: 'bg-blue-50 border-blue-200 text-blue-800',
+                warning: 'bg-yellow-50 border-yellow-200 text-yellow-800'
+            };
+            
+            const notification = document.createElement('div');
+            notification.className = `fixed top-4 right-4 z-50 rounded-lg border p-4 shadow-lg ${colors[type]} max-w-md`;
+            notification.innerHTML = `
+                <div class="flex items-start">
+                    <div class="flex-1">
+                        <p class="text-sm font-medium">${message}</p>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-gray-400 hover:text-gray-600">
+                        <span class="sr-only">Close</span>
+                        <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                        </svg>
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 5000);
+        };
+        
+        window.updateRefreshButton = function(status, text) {
+            const button = document.getElementById('refreshButton');
+            const icon = document.getElementById('refreshIcon');
+            const textEl = document.getElementById('refreshText');
+            
+            if (!button) return;
+            
+            if (status === 'loading') {
+                button.disabled = true;
+                icon.classList.add('animate-spin');
+                textEl.textContent = text || 'Refreshing...';
+            } else {
+                button.disabled = false;
+                icon.classList.remove('animate-spin');
+                textEl.textContent = text || 'Refresh';
+            }
+        };
+        
+        window.updateProgressModal = function(data) {
+            fetch('{% url "ibkr:refresh_status_api" %}')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'running') {
+                        updateRefreshButton('loading', 'Refreshing...');
+                        updateProgressModal(data);
+                    } else if (data.status === 'completed') {
+                        updateRefreshButton('ready', 'Refresh');
+                        showNotification('✅ Data refresh completed! ' + 
+                            `${data.stats?.stocks || 0} stocks, ` +
+                            `${data.stats?.indicators || 0} indicators, ` +
+                            `${data.stats?.options || 0} options updated.`, 'success');
+                        clearInterval(refreshCheckInterval);
+                        hideProgressModal();
+                        setTimeout(() => location.reload(), 2000);
+                    } else if (data.status === 'error') {
+                        updateRefreshButton('ready', 'Refresh');
+                        showNotification('❌ Refresh failed: ' + data.error, 'error');
+                        clearInterval(refreshCheckInterval);
+                        hideProgressModal();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking refresh status:', error);
+                });
+        }
+        
+        function updateProgressModal(data) {
+            let modal = document.getElementById('progressModal');
+            if (!modal) {
+                modal = createProgressModal();
+            }
+            
+            const progress = data.progress || {};
+            const percentage = progress.percentage || 0;
+            const step = progress.step || 1;
+            const totalSteps = progress.total_steps || 3;
+            const message = progress.message || data.message || 'Processing...';
+            const detail = progress.detail || '';
+            
+            // Update progress bar
+            const progressBar = modal.querySelector('#progressBar');
+            const progressText = modal.querySelector('#progressText');
+            const progressStep = modal.querySelector('#progressStep');
+            const progressDetail = modal.querySelector('#progressDetail');
+            
+            if (progressBar) progressBar.style.width = percentage + '%';
+            if (progressText) progressText.textContent = percentage + '%';
+            if (progressStep) progressStep.textContent = `Step ${step} of ${totalSteps}: ${message}`;
+            if (progressDetail) progressDetail.textContent = detail;
+            
+            modal.classList.remove('hidden');
+        };
+        
+        window.createProgressModal = function() {
+            const modal = document.createElement('div');
+            modal.id = 'progressModal';
+            modal.className = 'fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+                    <div class="flex items-center mb-4">
+                        <svg class="animate-spin h-6 w-6 text-blue-600 mr-3" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <h3 class="text-lg font-semibold text-gray-900">Refreshing Data...</h3>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <div class="flex justify-between mb-2">
+                            <span id="progressStep" class="text-sm font-medium text-gray-700">Initializing...</span>
+                            <span id="progressText" class="text-sm font-medium text-blue-600">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                            <div id="progressBar" class="bg-blue-600 h-3 rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    
+                    <p id="progressDetail" class="text-sm text-gray-600 mb-4 min-h-[20px]">
+                        Starting refresh process...
+                    </p>
+                    
+                    <div class="bg-blue-50 border border-blue-200 rounded-md p-3">
+                        <div class="flex">
+                            <svg class="h-5 w-5 text-blue-600 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path>
+                            </svg>
+                            <p class="text-xs text-blue-700">
+                                This may take 3-7 minutes. You can continue using the platform during the refresh.
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4 flex justify-end">
+                        <button onclick="hideProgressModal()" class="text-sm text-gray-600 hover:text-gray-800 px-3 py-1 rounded hover:bg-gray-100">
+                            Hide
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            return modal;
+        };
+        
+        window.hideProgressModal = function() {
+            const modal = document.getElementById('progressModal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+        };
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="h-full bg-gray-50">
+    <div class="min-h-full">
+        {% include 'components/navbar.html' %}
+        
+        <main>
+            {% if messages %}
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4">
+                {% for message in messages %}
+                <div class="rounded-md {% if message.tags == 'success' %}bg-green-50 border border-green-200{% elif message.tags == 'error' %}bg-red-50 border border-red-200{% else %}bg-blue-50 border border-blue-200{% endif %} p-4 mb-4">
+                    <p class="text-sm {% if message.tags == 'success' %}text-green-800{% elif message.tags == 'error' %}text-red-800{% else %}text-blue-800{% endif %}">
+                        {{ message }}
+                    </p>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            
+            {% block content %}{% endblock %}
+        </main>
+        
+        {% include 'components/footer.html' %}
+    </div>
+    
+    <!-- Initialize refresh functionality after DOM loads -->
+    <script>
+        // Ensure URLs are available
+        const REFRESH_API_URL = '{% url "ibkr:refresh_all_data_api" %}';
+        const REFRESH_STATUS_URL = '{% url "ibkr:refresh_status_api" %}';
+        
+        // Test if URLs are working
+        console.log('Refresh API URL:', REFRESH_API_URL);
+        console.log('Refresh Status URL:', REFRESH_STATUS_URL);
+        
+        // Override refreshData to use the correct URLs
+        window.refreshData = function(mode = 'quick') {
+            const csrftoken = window.getCookie('csrftoken');
+            
+            console.log('Refresh button clicked! Mode:', mode);
+            window.updateRefreshButton('loading', 'Starting...');
+            
+            const modeText = mode === 'quick' ? '⚡ Quick refresh (stale data only)' : '🔄 Full refresh (all data)';
+            window.showNotification(modeText, 'info');
+            
+            fetch(REFRESH_API_URL, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ mode: mode })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Refresh response:', data);
+                if (data.success) {
+                    window.updateRefreshButton('loading', 'Refreshing...');
+                    window.createProgressModal();
+                    
+                    // Check status every 2 seconds for faster updates
+                    window.refreshCheckInterval = setInterval(window.checkRefreshStatus, 2000);
+                    window.checkRefreshStatus();
+                } else {
+                    window.updateRefreshButton('ready', 'Refresh');
+                    window.showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Refresh error:', error);
+                window.updateRefreshButton('ready', 'Refresh');
+                window.showNotification('❌ Error starting refresh: ' + error.message, 'error');
+            });
+        };
+        
+        // Override checkRefreshStatus to use correct URL
+        function checkRefreshStatusOverride() {
+            fetch(REFRESH_STATUS_URL)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'running') {
+                        window.updateRefreshButton('loading', 'Refreshing...');
+                        window.updateProgressModal(data);
+                    } else if (data.status === 'completed') {
+                        window.updateRefreshButton('ready', 'Refresh');
+                        window.showNotification('✅ Data refresh completed! ' + 
+                            `${data.stats?.stocks || 0} stocks, ` +
+                            `${data.stats?.indicators || 0} indicators, ` +
+                            `${data.stats?.options || 0} options updated.`, 'success');
+                        clearInterval(window.refreshCheckInterval);
+                        window.hideProgressModal();
+                        setTimeout(() => location.reload(), 2000);
+                    } else if (data.status === 'error') {
+                        window.updateRefreshButton('ready', 'Refresh');
+                        window.showNotification('❌ Refresh failed: ' + (data.error || 'Unknown error'), 'error');
+                        clearInterval(window.refreshCheckInterval);
+                        window.hideProgressModal();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking refresh status:', error);
+                });
+        }
+        
+        // Replace the checkRefreshStatus function
+        window.checkRefreshStatus = checkRefreshStatusOverride;
+        
+        // Sync Positions function
+        window.syncPositions = function() {
+            const csrftoken = window.getCookie('csrftoken');
+            
+            console.log('Sync positions clicked!');
+            window.showNotification('📊 Syncing positions from IBKR...', 'info');
+            
+            fetch('/ibkr/api/positions/sync/', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Sync response:', data);
+                if (data.success) {
+                    window.showNotification('⏳ Position sync in progress...', 'info');
+                    
+                    // Check status every 2 seconds
+                    let syncCheckInterval = setInterval(() => {
+                        fetch('/ibkr/api/positions/sync/status/')
+                            .then(response => response.json())
+                            .then(statusData => {
+                                if (statusData.status === 'completed') {
+                                    clearInterval(syncCheckInterval);
+                                    window.showNotification(`✅ ${statusData.message}`, 'success');
+                                    setTimeout(() => location.reload(), 2000);
+                                } else if (statusData.status === 'error') {
+                                    clearInterval(syncCheckInterval);
+                                    window.showNotification('❌ Sync failed: ' + (statusData.error || 'Unknown error'), 'error');
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Error checking sync status:', error);
+                                clearInterval(syncCheckInterval);
+                            });
+                    }, 2000);
+                } else {
+                    window.showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Sync error:', error);
+                window.showNotification('❌ Error starting sync: ' + error.message, 'error');
+            });
+        };
+    </script>
+</body>
+</html>

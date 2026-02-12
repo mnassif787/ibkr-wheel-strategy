@@ -1,0 +1,94 @@
+<nav class="bg-white shadow-sm border-b border-gray-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between h-16">
+            <div class="flex">
+                <div class="flex-shrink-0 flex items-center">
+                    <a href="{% url 'core:index' %}" class="text-xl font-bold text-blue-600">
+                        📊 IBKR Wheel
+                    </a>
+                </div>
+                <div class="hidden sm:ml-6 sm:flex sm:space-x-8">
+                    <a href="{% url 'core:index' %}" class="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                        Home
+                    </a>
+                    <a href="{% url 'ibkr:hub' %}" class="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                        📊 Hub
+                    </a>
+                    <a href="{% url 'ibkr:gateway_control' %}" class="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                        🔌 Gateway
+                    </a>
+                </div>
+            </div>
+            <div class="flex items-center space-x-4">
+                <!-- Refresh Button with Dropdown -->
+                <div class="relative inline-block" id="refreshDropdown">
+                    <button id="refreshButton" 
+                            onclick="if(typeof refreshData === 'function') { refreshData('quick'); } else { alert('Refresh function not loaded. Please reload the page.'); }"
+                            oncontextmenu="event.preventDefault(); document.getElementById('refreshMenu').classList.toggle('hidden');"
+                            class="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Quick Refresh (Right-click for options)">
+                        <svg id="refreshIcon" class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        <span id="refreshText">Refresh</span>
+                    </button>
+                    
+                    <!-- Dropdown Menu -->
+                    <div id="refreshMenu" class="hidden absolute right-0 mt-2 w-56 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50">
+                        <div class="py-1">
+                            <button onclick="document.getElementById('refreshMenu').classList.add('hidden'); refreshData('quick');" 
+                                    class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center">
+                                <span class="mr-2">⚡</span>
+                                <div>
+                                    <div class="font-medium">Quick Refresh</div>
+                                    <div class="text-xs text-gray-500">Only stale data (~30s)</div>
+                                </div>
+                            </button>
+                            <button onclick="document.getElementById('refreshMenu').classList.add('hidden'); refreshData('full');" 
+                                    class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center">
+                                <span class="mr-2">🔄</span>
+                                <div>
+                                    <div class="font-medium">Full Refresh</div>
+                                    <div class="text-xs text-gray-500">Everything + options (~5min)</div>
+                                </div>
+                            </button>
+                            <div class="border-t border-gray-100 my-1"></div>
+                            <button onclick="document.getElementById('refreshMenu').classList.add('hidden'); syncPositions();" 
+                                    class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center">
+                                <span class="mr-2">📊</span>
+                                <div>
+                                    <div class="font-medium">Sync Positions</div>
+                                    <div class="text-xs text-gray-500">Fetch from IBKR Gateway</div>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <script>
+                    // Close dropdown when clicking outside
+                    document.addEventListener('click', function(event) {
+                        const dropdown = document.getElementById('refreshDropdown');
+                        const menu = document.getElementById('refreshMenu');
+                        if (dropdown && menu && !dropdown.contains(event.target)) {
+                            menu.classList.add('hidden');
+                        }
+                    });
+                </script>
+                
+                <!-- Health Status Indicator -->
+                <a href="{% url 'ibkr:health_check' %}" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-colors
+                    {% if health_status.status == 'healthy' %}bg-green-50 text-green-700 border-green-200 hover:bg-green-100{% elif health_status.status == 'warning' %}bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100{% elif health_status.status == 'critical' %}bg-red-50 text-red-700 border-red-200 hover:bg-red-100{% else %}bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100{% endif %}"
+                    title="{{ health_status.message }} - Click for details">
+                    <span class="mr-1">{{ health_status.icon }}</span>
+                    <span>{{ health_status.passed_count }}/{{ health_status.total_count }}</span>
+                    {% if health_status.failed_count > 0 or health_status.warning_count > 0 %}
+                        <span class="ml-1 font-bold">!</span>
+                    {% endif %}
+                </a>
+                
+                <a href="/admin/" class="text-sm font-medium text-gray-700 hover:text-gray-900">Admin</a>
+            </div>
+        </div>
+    </div>
+</nav>

@@ -1,0 +1,143 @@
+{% load wheel_filters %}
+
+<div>
+    <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-900">🎯 Wheel Strategy Signals</h2>
+        <p class="text-gray-600 mt-1">Cash-Secured Puts & Covered Calls with AI scoring</p>
+    </div>
+
+    <!-- Wheel Strategy Explainer -->
+    <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 mb-4">
+        <h3 class="text-sm font-bold text-blue-900 mb-2">📚 The Wheel Strategy</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div class="bg-white p-2 rounded border border-blue-200">
+                <h4 class="font-semibold text-green-700 mb-1">Phase 1: Sell Cash-Secured Puts</h4>
+                <ul class="space-y-1 text-gray-700 list-disc list-inside">
+                    <li>Collect premium while waiting</li>
+                    <li>If assigned: Buy stock at discount</li>
+                    <li>If expires: Keep premium, repeat</li>
+                </ul>
+            </div>
+            <div class="bg-white p-2 rounded border border-blue-200">
+                <h4 class="font-semibold text-purple-700 mb-1">Phase 2: Sell Covered Calls</h4>
+                <ul class="space-y-1 text-gray-700 list-disc list-inside">
+                    <li>After assignment, sell calls</li>
+                    <li>Collect premium on owned shares</li>
+                    <li>If called: Profit + premium</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signals List -->
+    {% if signals %}
+    <div class="mb-3 flex items-center justify-between">
+        <div class="text-sm text-gray-600">
+            Found <strong>{{ signals.count }}</strong> signal(s)
+        </div>
+        <div class="flex gap-2 text-xs">
+            <span class="px-2 py-1 bg-green-100 text-green-800 rounded">A - Excellent</span>
+            <span class="px-2 py-1 bg-yellow-100 text-yellow-800 rounded">B - Good</span>
+            <span class="px-2 py-1 bg-red-100 text-red-800 rounded">C - Fair</span>
+        </div>
+    </div>
+
+    <div class="space-y-3">
+        {% for signal in signals %}
+        <div class="bg-white rounded-lg border-2 
+            {% if signal.grade == 'A' %}border-green-200
+            {% elif signal.grade == 'B' %}border-yellow-200
+            {% else %}border-red-200{% endif %} p-4 hover:shadow-md transition">
+            
+            <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-3">
+                    <h3 class="text-xl font-bold text-blue-600">{{ signal.stock.ticker }}</h3>
+                    
+                    <!-- Grade Badge -->
+                    <span class="px-3 py-1 text-sm font-bold rounded-lg
+                        {% if signal.grade == 'A' %}bg-green-500 text-white
+                        {% elif signal.grade == 'B' %}bg-yellow-500 text-white
+                        {% else %}bg-red-500 text-white{% endif %}">
+                        Grade {{ signal.grade|default:"C" }}
+                    </span>
+                    
+                    <!-- Score -->
+                    <span class="text-xs text-gray-600">
+                        Score: <strong>{{ signal.quality_score }}/100</strong>
+                    </span>
+                    
+                    <!-- Status -->
+                    <span class="px-2 py-1 text-xs font-medium rounded-full
+                        {% if signal.status == 'OPEN' %}bg-green-100 text-green-800
+                        {% elif signal.status == 'FILLED' %}bg-blue-100 text-blue-800
+                        {% else %}bg-gray-100 text-gray-800{% endif %}">
+                        {{ signal.status }}
+                    </span>
+                    
+                    <!-- Type -->
+                    <span class="px-2 py-1 text-xs font-medium rounded-full
+                        {% if signal.signal_type == 'COVERED_CALL' %}bg-indigo-100 text-indigo-800
+                        {% else %}bg-purple-100 text-purple-800{% endif %}">
+                        {{ signal.get_signal_type_display }}
+                    </span>
+                </div>
+            </div>
+
+            <!-- Stock Name -->
+            {% if signal.stock.name %}
+            <p class="text-sm text-gray-700 mb-3">{{ signal.stock.name }}</p>
+            {% endif %}
+
+            <!-- Technical Reason -->
+            {% if signal.technical_reason %}
+            <div class="mb-3 p-2 bg-blue-50 border border-blue-200 rounded">
+                <p class="text-xs text-blue-900">
+                    <strong>📊 Why:</strong> {{ signal.technical_reason }}
+                </p>
+            </div>
+            {% endif %}
+
+            <!-- Key Metrics -->
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
+                <div class="bg-gray-50 rounded p-2">
+                    <p class="text-xs text-gray-500">Strike</p>
+                    <p class="text-sm font-semibold">${{ signal.option.strike }}</p>
+                </div>
+                <div class="bg-green-50 rounded p-2">
+                    <p class="text-xs text-gray-500">Premium</p>
+                    <p class="text-sm font-semibold text-green-600">${{ signal.premium }}</p>
+                </div>
+                <div class="bg-blue-50 rounded p-2">
+                    <p class="text-xs text-gray-500">APY</p>
+                    <p class="text-sm font-semibold text-blue-600">{{ signal.apy_pct|floatformat:1 }}%</p>
+                </div>
+                <div class="bg-purple-50 rounded p-2">
+                    <p class="text-xs text-gray-500">ERR</p>
+                    <p class="text-sm font-semibold">{{ signal.err_pct|floatformat:1 }}%</p>
+                </div>
+                <div class="bg-yellow-50 rounded p-2">
+                    <p class="text-xs text-gray-500">Risk</p>
+                    <p class="text-sm font-semibold">{{ signal.assignment_risk_pct|floatformat:0 }}%</p>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex gap-2">
+                <a href="{% url 'ibkr:stock_detail' signal.stock.ticker %}" class="px-3 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700">
+                    View Stock
+                </a>
+                <a href="{% url 'ibkr:options_ticker' signal.stock.ticker %}" class="px-3 py-1 bg-green-600 text-white rounded text-xs font-semibold hover:bg-green-700">
+                    View Options
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="bg-white rounded-lg border border-gray-200 p-12 text-center">
+        <div class="text-6xl mb-4">🎯</div>
+        <h3 class="text-lg font-medium text-gray-900 mb-2">No Active Signals</h3>
+        <p class="text-gray-500">Check back later or adjust your watchlist</p>
+    </div>
+    {% endif %}
+</div>

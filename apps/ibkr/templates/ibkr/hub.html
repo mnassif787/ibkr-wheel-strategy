@@ -1,0 +1,267 @@
+{% extends 'base.html' %}
+{% load wheel_filters %}
+
+{% block title %}IBKR Wheel Strategy Hub{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <!-- Live Data Status Bar -->
+    <div class="bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-300 rounded-lg p-4 mb-4 shadow-sm">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-6">
+                <!-- Live Status Indicator -->
+                {% if last_updated %}
+                {% with status=last_updated|connection_status %}
+                <div class="flex items-center space-x-3">
+                    <span class="mr-1">
+                        {% if status == 'live' %}
+                        <span class="flex h-4 w-4 relative">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-4 w-4 bg-green-500"></span>
+                        </span>
+                        {% elif status == 'delayed' %}
+                        <span class="inline-flex rounded-full h-4 w-4 bg-yellow-500 animate-pulse"></span>
+                        {% else %}
+                        <span class="inline-flex rounded-full h-4 w-4 bg-red-500"></span>
+                        {% endif %}
+                    </span>
+                    <div class="flex flex-col">
+                        <span class="text-sm font-bold
+                            {% if status == 'live' %}text-green-700
+                            {% elif status == 'delayed' %}text-yellow-700
+                            {% else %}text-red-700{% endif %}">
+                            {% if status == 'live' %}🟢 LIVE DATA
+                            {% elif status == 'delayed' %}🟡 DELAYED DATA
+                            {% else %}🔴 DISCONNECTED{% endif %}
+                        </span>
+                        <div class="text-xs text-gray-600">
+                            Last sync: <strong>{{ last_updated|date:"m/d/Y H:i:s" }}</strong>
+                            <span class="text-gray-500">({{ last_updated|time_since_update }})</span>
+                        </div>
+                    </div>
+                </div>
+                {% endwith %}
+                {% else %}
+                <div class="text-sm text-gray-500 font-semibold">⚠️ No data synced yet</div>
+                {% endif %}
+                
+                <!-- Auto-refresh indicator -->
+                <div id="autoRefreshStatus" class="text-sm text-gray-600 hidden">
+                    <span class="inline-flex items-center">
+                        <svg class="animate-spin h-4 w-4 mr-2 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Auto-refresh in <span id="refreshTimer">30</span>s
+                    </span>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-2">
+                <!-- Auto-refresh toggle -->
+                <div class="flex items-center space-x-2 bg-white px-3 py-2 rounded-lg border border-gray-300">
+                    <label class="text-sm font-semibold text-gray-700">Auto-refresh:</label>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="autoRefreshToggle" class="sr-only peer" checked>
+                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                </div>
+                
+                <!-- Orders page link -->
+                <a href="{% url 'ibkr:orders' %}" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm">
+                    📋 Orders
+                </a>
+                <!-- Gateway status link -->
+                <a href="{% url 'ibkr:gateway_control' %}" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-semibold text-sm">
+                    🔌 Gateway
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
+        <div class="border-b border-gray-200">
+            <nav class="flex -mb-px" aria-label="Tabs">
+                <button onclick="switchTab('positions')" id="tab-positions" class="tab-button active group relative min-w-0 flex-1 overflow-hidden bg-white py-4 px-4 text-sm font-medium text-center hover:bg-gray-50 focus:z-10">
+                    <span class="text-lg">📊 My Positions</span>
+                    <span aria-hidden="true" class="tab-indicator bg-blue-500 absolute inset-x-0 bottom-0 h-1"></span>
+                </button>
+                <button onclick="switchTab('discovery')" id="tab-discovery" class="tab-button group relative min-w-0 flex-1 overflow-hidden bg-white py-4 px-4 text-sm font-medium text-center hover:bg-gray-50 focus:z-10">
+                    <span class="text-lg">🔍 Discovery</span>
+                    <span aria-hidden="true" class="tab-indicator bg-blue-500 absolute inset-x-0 bottom-0 h-0"></span>
+                </button>
+            </nav>
+        </div>
+    </div>
+
+    <!-- Tab Content: My Positions -->
+    <div id="content-positions" class="tab-content">
+        {% include 'ibkr/tabs/positions_tab.html' %}
+    </div>
+
+    <!-- Tab Content: Discovery (with sub-tabs) -->
+    <div id="content-discovery" class="tab-content hidden">
+        <!-- Discovery Sub-tabs -->
+        <div class="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200 p-3 mb-4">
+            <nav class="flex space-x-2">
+                <button onclick="switchSubTab('stocks')" id="subtab-stocks" class="subtab-button active px-6 py-2 rounded-lg font-semibold text-sm transition-colors">
+                    📈 Stocks
+                </button>
+                <button onclick="switchSubTab('options')" id="subtab-options" class="subtab-button px-6 py-2 rounded-lg font-semibold text-sm transition-colors">
+                    📊 Options
+                </button>
+                <button onclick="switchSubTab('signals')" id="subtab-signals" class="subtab-button px-6 py-2 rounded-lg font-semibold text-sm transition-colors">
+                    🎯 Signals
+                </button>
+            </nav>
+        </div>
+
+        <!-- Discovery Sub-tab Content -->
+        <div id="subcontent-stocks" class="subtab-content">
+            {% include 'ibkr/tabs/stocks_tab.html' %}
+        </div>
+        <div id="subcontent-options" class="subtab-content hidden">
+            {% include 'ibkr/tabs/options_tab.html' %}
+        </div>
+        <div id="subcontent-signals" class="subtab-content hidden">
+            {% include 'ibkr/tabs/signals_tab.html' %}
+        </div>
+    </div>
+</div>
+
+<script>
+// Tab switching functionality
+function switchTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.classList.remove('active');
+        btn.querySelector('.tab-indicator').classList.remove('h-1');
+        btn.querySelector('.tab-indicator').classList.add('h-0');
+    });
+    document.getElementById(`tab-${tabName}`).classList.add('active');
+    document.getElementById(`tab-${tabName}`).querySelector('.tab-indicator').classList.remove('h-0');
+    document.getElementById(`tab-${tabName}`).querySelector('.tab-indicator').classList.add('h-1');
+    
+    // Update tab content
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.add('hidden');
+    });
+    document.getElementById(`content-${tabName}`).classList.remove('hidden');
+    
+    // Save active tab to localStorage
+    localStorage.setItem('activeTab', tabName);
+}
+
+function switchSubTab(subTabName) {
+    // Update subtab buttons
+    document.querySelectorAll('.subtab-button').forEach(btn => {
+        btn.classList.remove('active', 'bg-white', 'text-purple-700', 'shadow-sm', 'border', 'border-purple-300');
+        btn.classList.add('text-gray-600', 'hover:bg-white', 'hover:text-gray-800');
+    });
+    const activeBtn = document.getElementById(`subtab-${subTabName}`);
+    activeBtn.classList.add('active', 'bg-white', 'text-purple-700', 'shadow-sm', 'border', 'border-purple-300');
+    activeBtn.classList.remove('text-gray-600', 'hover:bg-white', 'hover:text-gray-800');
+    
+    // Update subtab content
+    document.querySelectorAll('.subtab-content').forEach(content => {
+        content.classList.add('hidden');
+    });
+    document.getElementById(`subcontent-${subTabName}`).classList.remove('hidden');
+    
+    // Save active subtab to localStorage
+    localStorage.setItem('activeSubTab', subTabName);
+}
+
+// Auto-refresh functionality
+let refreshInterval;
+let refreshTimer = 30;
+let autoRefreshEnabled = true;
+
+function startAutoRefresh() {
+    if (!autoRefreshEnabled) return;
+    
+    refreshTimer = 30;
+    document.getElementById('autoRefreshStatus').classList.remove('hidden');
+    
+    refreshInterval = setInterval(() => {
+        refreshTimer--;
+        document.getElementById('refreshTimer').textContent = refreshTimer;
+        
+        if (refreshTimer <= 0) {
+            window.location.reload();
+        }
+    }, 1000);
+}
+
+function stopAutoRefresh() {
+    clearInterval(refreshInterval);
+    document.getElementById('autoRefreshStatus').classList.add('hidden');
+}
+
+// Toggle auto-refresh
+document.getElementById('autoRefreshToggle').addEventListener('change', function(e) {
+    autoRefreshEnabled = e.target.checked;
+    localStorage.setItem('autoRefreshEnabled', autoRefreshEnabled);
+    
+    if (autoRefreshEnabled) {
+        startAutoRefresh();
+    } else {
+        stopAutoRefresh();
+    }
+});
+
+// Restore state on load
+document.addEventListener('DOMContentLoaded', function() {
+    // Restore active tab
+    const savedTab = localStorage.getItem('activeTab');
+    if (savedTab) {
+        switchTab(savedTab);
+    }
+    
+    // Restore active subtab
+    const savedSubTab = localStorage.getItem('activeSubTab');
+    if (savedSubTab) {
+        switchSubTab(savedSubTab);
+    }
+    
+    // Restore auto-refresh setting
+    const savedAutoRefresh = localStorage.getItem('autoRefreshEnabled');
+    if (savedAutoRefresh !== null) {
+        autoRefreshEnabled = savedAutoRefresh === 'true';
+        document.getElementById('autoRefreshToggle').checked = autoRefreshEnabled;
+    }
+    
+    // Start auto-refresh if enabled
+    if (autoRefreshEnabled) {
+        startAutoRefresh();
+    }
+});
+
+// Apply styles to active/inactive tabs
+document.head.insertAdjacentHTML('beforeend', `
+<style>
+.tab-button.active {
+    color: #2563eb;
+    font-weight: 600;
+}
+.tab-button:not(.active) {
+    color: #6b7280;
+}
+.subtab-button.active {
+    background-color: white;
+    color: #7c3aed;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    border: 1px solid #c084fc;
+}
+.subtab-button:not(.active) {
+    color: #6b7280;
+}
+.subtab-button:not(.active):hover {
+    background-color: white;
+    color: #374151;
+}
+</style>
+`);
+</script>
+{% endblock %}

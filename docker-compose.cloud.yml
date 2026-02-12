@@ -1,0 +1,78 @@
+services:
+  web:
+    build: .
+    container_name: ibkr-wheel-django
+    ports:
+      - "8000:8000"
+    volumes:
+      - sqlite_data:/app/data
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    env_file:
+      - .env
+    depends_on:
+      - ib-gateway
+    environment:
+      - IBKR_HOST=ib-gateway
+      - IBKR_PORT=8888
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - ALLOWED_HOSTS=*
+    command: >
+      sh -c "cp /app/db.sqlite3 /app/data/db.sqlite3 2>/dev/null || true &&
+             ln -sf /app/data/db.sqlite3 /app/db.sqlite3 &&
+             python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 120 --access-logfile - --error-logfile - config.wsgi:application"
+    restart: unless-stopped
+    networks:
+      - ibkr-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  ib-gateway:
+    image: ghcr.io/extrange/ibkr:stable
+    container_name: ib-gateway
+    ports:
+      - "6080:6080"  # noVNC browser - open http://localhost:6080 to login manually
+      - "8888:8888"  # TWS API access
+    ulimits:
+      nofile: 10000
+    environment:
+      # No USERNAME/PASSWORD - log in manually via noVNC at http://localhost:6080
+      - IBC_TradingMode=${IBKR_TRADING_MODE:-paper}
+      - GATEWAY_OR_TWS=gateway
+      - TWOFA_TIMEOUT_ACTION=restart
+    restart: unless-stopped
+    networks:
+      - ibkr-network
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -an | grep 8888 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # Optional: Cloudflare Tunnel for FREE HTTPS (no ports needed!)
+  # Uncomment below after setting up cloudflared
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   container_name: cloudflared
+  #   command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+  #   restart: unless-stopped
+  #   networks:
+  #     - ibkr-network
+  #   depends_on:
+  #     - web
+
+networks:
+  ibkr-network:
+    driver: bridge
+
+volumes:
+  static_volume:
+  media_volume:
+  sqlite_data:

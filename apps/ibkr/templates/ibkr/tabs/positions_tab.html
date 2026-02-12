@@ -1,0 +1,893 @@
+{% load wheel_filters %}
+
+<div>
+    <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-900">📊 My Option Positions</h2>
+        <p class="text-gray-600 mt-1">Track your wheel strategy positions with real-time AI recommendations</p>
+    </div>
+
+    <!-- Open Positions -->
+    <div class="mb-8">
+        <div class="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-300 rounded-lg p-4 mb-4">
+            <h3 class="text-xl font-bold text-gray-900">🟢 Open Positions ({{ open_positions|length }})</h3>
+        </div>
+
+        {% if open_positions %}
+        <div class="space-y-4">
+            {% for position in open_positions %}
+            <div class="bg-white rounded-lg shadow-md border-2 border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
+                <div class="p-6">
+                    <div class="flex items-start justify-between mb-4">
+                        <div>
+                            <h4 class="text-2xl font-bold text-gray-900">
+                                {{ position.stock.ticker }} ${{ position.strike }} {{ position.option_type }}
+                            </h4>
+                            <p class="text-sm text-gray-600 mt-1">
+                                Expires: {{ position.expiry_date|date:"M d, Y" }} ({{ position.dte }} days left)
+                            </p>
+                        </div>
+                        <span class="px-3 py-1 rounded-full text-xs font-bold
+                            {% if position.option_type == 'PUT' %}bg-red-100 text-red-800{% else %}bg-green-100 text-green-800{% endif %}">
+                            {{ position.option_type }}
+                        </span>
+                    </div>
+
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                        <div class="bg-blue-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-600 flex items-center gap-1.5">
+                                Stock Price
+                                <span class="group relative inline-flex">
+                                    <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-blue-600 bg-blue-100 rounded-full cursor-help transition-all duration-200 hover:bg-blue-600 hover:text-white hover:scale-110">i</span>
+                                    <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-48 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                        Current market price of {{ position.stock.ticker }}. Entry shows the stock price when you sold this option.
+                                        <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                                    </span>
+                                </span>
+                            </p>
+                            <p class="text-lg font-bold text-blue-700">${{ position.stock.last_price }}</p>
+                            <p class="text-xs text-gray-500">Entry: ${{ position.entry_stock_price }}</p>
+                        </div>
+                        <div class="bg-green-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-600 flex items-center gap-1.5">
+                                Premium Collected
+                                <span class="group relative inline-flex">
+                                    <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-green-600 bg-green-100 rounded-full cursor-help transition-all duration-200 hover:bg-green-600 hover:text-white hover:scale-110">i</span>
+                                    <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-48 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                        Total cash you received upfront when selling this {{ position.option_type }}. This is your maximum profit if the option expires worthless.
+                                        <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                                    </span>
+                                </span>
+                            </p>
+                            <p class="text-lg font-bold text-green-700">${{ position.total_premium }}</p>
+                            <p class="text-xs text-gray-500">{{ position.contracts }} contract(s)</p>
+                        </div>
+                        <div class="{% if position.unrealized_pl > 0 %}bg-green-50{% else %}bg-red-50{% endif %} rounded-lg p-3">
+                            <p class="text-xs text-gray-600 flex items-center gap-1.5">
+                                Unrealized P/L
+                                <span class="group relative inline-flex">
+                                    <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold {% if position.unrealized_pl > 0 %}text-green-600 bg-green-100 hover:bg-green-600{% else %}text-red-600 bg-red-100 hover:bg-red-600{% endif %} rounded-full cursor-help transition-all duration-200 hover:text-white hover:scale-110">i</span>
+                                    <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-56 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                        Your current profit/loss if you closed this position now. Positive = profit (option decreased in value). For sold options, you profit when the option loses value.
+                                        <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                                    </span>
+                                </span>
+                            </p>
+                            <p class="text-lg font-bold {% if position.unrealized_pl > 0 %}text-green-700{% else %}text-red-700{% endif %}">
+                                {% if position.unrealized_pl %}${{ position.unrealized_pl|floatformat:2 }}{% else %}Calculating...{% endif %}
+                            </p>
+                            <p class="text-xs text-gray-500">
+                                {% if position.unrealized_pl_pct %}{{ position.unrealized_pl_pct|floatformat:1 }}%{% else %}-{% endif %}
+                            </p>
+                        </div>
+                        <div class="bg-purple-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-600 flex items-center gap-1.5">
+                                Days Held
+                                <span class="group relative inline-flex">
+                                    <span class="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-purple-600 bg-purple-100 rounded-full cursor-help transition-all duration-200 hover:bg-purple-600 hover:text-white hover:scale-110">i</span>
+                                    <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-56 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                        Number of days since you sold this option. Break-even is the stock price where assignment would result in zero profit/loss (Strike - Premium per share).
+                                        <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                                    </span>
+                                </span>
+                            </p>
+                            <p class="text-lg font-bold text-purple-700">{{ position.days_held }}</p>
+                            <p class="text-xs text-gray-500">Break-even: ${{ position.break_even|floatformat:2 }}</p>
+                        </div>
+                    </div>
+
+                    <!-- AI Recommendation -->
+                    {% if position.ai_recommendation %}
+                    <div class="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-{{ position.ai_recommendation.color }}-300 rounded-lg p-4 mb-4">
+                        <div class="flex items-start space-x-3">
+                            <div class="text-3xl">🤖</div>
+                            <div class="flex-1">
+                                <div class="flex items-start justify-between mb-2">
+                                    <h5 class="font-bold text-{{ position.ai_recommendation.color }}-900 text-lg">
+                                        {{ position.ai_recommendation.action }}
+                                    </h5>
+                                    <div class="bg-{{ position.ai_recommendation.color }}-100 border-2 border-{{ position.ai_recommendation.color }}-400 rounded-lg px-3 py-1">
+                                        <div class="text-xs font-semibold text-{{ position.ai_recommendation.color }}-700">AI CONFIDENCE</div>
+                                        <div class="text-2xl font-bold text-{{ position.ai_recommendation.color }}-900">{{ position.ai_recommendation.confidence }}%</div>
+                                    </div>
+                                </div>
+                                <div class="bg-white bg-opacity-60 rounded-lg p-3 mb-2">
+                                    <div class="text-xs font-bold text-gray-700 mb-1">📋 WHY THIS RECOMMENDATION:</div>
+                                    <p class="text-sm text-{{ position.ai_recommendation.color }}-800">
+                                        {{ position.ai_recommendation.reason }}
+                                    </p>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <div class="flex-1 bg-gray-200 rounded-full h-3">
+                                        <div class="bg-{{ position.ai_recommendation.color }}-500 h-3 rounded-full transition-all duration-500" style="width: {{ position.ai_recommendation.confidence }}%"></div>
+                                    </div>
+                                    <span class="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-1 rounded">{{ position.ai_recommendation.confidence }}% Confidence</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Enhanced Position Analysis -->
+                    {% if position.analysis %}
+                    <div class="space-y-4 mb-4">
+                        <!-- Alerts -->
+                        {% if position.analysis.alerts %}
+                        <div class="space-y-2">
+                            {% for alert in position.analysis.alerts %}
+                            <div class="bg-{{ alert.color }}-50 border-l-4 border-{{ alert.color }}-500 p-3 rounded">
+                                <div class="flex items-center">
+                                    <span class="text-2xl mr-2">{{ alert.icon }}</span>
+                                    <p class="text-sm font-semibold text-{{ alert.color }}-800">{{ alert.message }}</p>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
+                        <!-- Assignment Probability -->
+                        {% if position.analysis.metrics.assignment_probability %}
+                        <div class="bg-white border-2 border-gray-200 rounded-lg p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-xs font-semibold text-gray-600 mb-1">ASSIGNMENT PROBABILITY</p>
+                                    <p class="text-lg font-bold text-{{ position.analysis.metrics.assignment_probability.color }}-700">
+                                        {{ position.analysis.metrics.assignment_probability.icon }} {{ position.analysis.metrics.assignment_probability.level }}
+                                    </p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="text-xs text-gray-600">Distance from Strike</p>
+                                    <p class="text-lg font-bold text-gray-900">{{ position.analysis.metrics.assignment_probability.distance }}</p>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Recommendations -->
+                        {% if position.analysis.recommendations %}
+                        <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-4">
+                            <p class="text-sm font-bold text-blue-900 mb-3">💡 RECOMMENDED ACTIONS</p>
+                            <div class="space-y-2">
+                                {% for rec in position.analysis.recommendations %}
+                                <div class="bg-white rounded-lg p-3 border-l-4 border-{{ rec.color }}-500">
+                                    <div class="flex items-start justify-between mb-1">
+                                        <p class="font-bold text-{{ rec.color }}-900">{{ rec.action }}</p>
+                                        <span class="text-xs px-2 py-1 rounded-full bg-{{ rec.color }}-100 text-{{ rec.color }}-800 font-semibold">
+                                            {{ rec.priority }}
+                                        </span>
+                                    </div>
+                                    <p class="text-sm text-gray-700 mb-1">{{ rec.reason }}</p>
+                                    <p class="text-xs text-gray-600">{{ rec.details }}</p>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- What-If Scenarios -->
+                        {% if position.analysis.scenarios.if_assigned %}
+                        <div class="grid md:grid-cols-2 gap-4">
+                            <div class="bg-orange-50 border-2 border-orange-300 rounded-lg p-4">
+                                <p class="text-sm font-bold text-orange-900 mb-2">{{ position.analysis.scenarios.if_assigned.title }}</p>
+                                <div class="space-y-1 text-sm">
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">Cost per share:</span>
+                                        <span class="font-semibold">{{ position.analysis.scenarios.if_assigned.cost_basis }}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">Total investment:</span>
+                                        <span class="font-semibold">{{ position.analysis.scenarios.if_assigned.total_cost }}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">Current value:</span>
+                                        <span class="font-semibold">{{ position.analysis.scenarios.if_assigned.current_value }}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">Unrealized P/L:</span>
+                                        <span class="font-semibold">{{ position.analysis.scenarios.if_assigned.unrealized_pl }}</span>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-orange-700 mt-2 italic">{{ position.analysis.scenarios.if_assigned.notes }}</p>
+                            </div>
+
+                            {% if position.analysis.scenarios.recovery %}
+                            <div class="bg-green-50 border-2 border-green-300 rounded-lg p-4">
+                                <p class="text-sm font-bold text-green-900 mb-2">{{ position.analysis.scenarios.recovery.title }}</p>
+                                <div class="space-y-1 text-sm">
+                                    {% for scenario in position.analysis.scenarios.recovery.scenarios %}
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">@ {{ scenario.price }}:</span>
+                                        <span class="font-semibold text-green-700">{{ scenario.gain }}</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <!-- Action Plan -->
+                        {% if position.analysis.action_plan %}
+                        <div class="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
+                            <p class="text-sm font-bold text-yellow-900 mb-3">📅 YOUR ACTION PLAN</p>
+                            {% if position.analysis.action_plan.immediate %}
+                            <div class="mb-3">
+                                <p class="text-xs font-semibold text-red-700 mb-1">⚡ IMMEDIATE:</p>
+                                <ul class="text-sm text-gray-700 space-y-1 pl-4">
+                                    {% for action in position.analysis.action_plan.immediate %}
+                                    <li class="list-disc">{{ action }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if position.analysis.action_plan.before_expiration %}
+                            <div class="mb-3">
+                                <p class="text-xs font-semibold text-orange-700 mb-1">📆 BEFORE EXPIRATION:</p>
+                                <ul class="text-sm text-gray-700 space-y-1 pl-4">
+                                    {% for action in position.analysis.action_plan.before_expiration %}
+                                    <li class="list-disc">{{ action }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if position.analysis.action_plan.at_expiration %}
+                            <div>
+                                <p class="text-xs font-semibold text-blue-700 mb-1">🎯 AT EXPIRATION:</p>
+                                <ul class="text-sm text-gray-700 space-y-1 pl-4">
+                                    {% for action in position.analysis.action_plan.at_expiration %}
+                                    <li class="list-disc">{{ action }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
+                    <!-- Action Buttons -->
+                    <div class="flex flex-wrap gap-3">
+                        <!-- View Options Chain -->
+                        <div class="group relative inline-flex">
+                            <a href="{% url 'ibkr:options_ticker' position.stock.ticker %}" 
+                               class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-semibold transition-all flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                                </svg>
+                                Options Chain
+                                <span class="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold text-blue-200 bg-blue-500 rounded-full cursor-help ml-1">i</span>
+                            </a>
+                            <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-56 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                View all available options for {{ position.stock.ticker }} to find opportunities for rolling or new positions
+                                <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                            </span>
+                        </div>
+                        
+                        <!-- Close Position (Buy Back) -->
+                        <div class="group relative inline-flex">
+                            <button onclick="closePosition({{ position.id }}, this)" 
+                                    data-ticker="{{ position.stock.ticker }}"
+                                    data-strike="{{ position.strike }}"
+                                    data-type="{{ position.option_type }}"
+                                    data-premium="{{ position.total_premium }}"
+                                    data-entry-premium="{{ position.entry_premium }}"
+                                    data-contracts="{{ position.contracts }}"
+                                    data-entry-date="{{ position.entry_date|date:'Y-m-d' }}"
+                                    data-expiry="{{ position.expiry_date|date:'Y-m-d' }}"
+                                    data-days-held="{{ position.days_held }}"
+                                    data-break-even="{{ position.break_even|floatformat:2 }}"
+                                    data-stock-price="{{ position.stock.last_price|default:'0' }}"
+                                    data-current-premium="{{ position.current_premium|default:'0' }}"
+                                    class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-semibold transition-all flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                Close Now
+                                <span class="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold text-green-200 bg-green-500 rounded-full cursor-help ml-1">i</span>
+                            </button>
+                            <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-56 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                Buy back this option to close the position and lock in current profit/loss. You'll pay the current market price.
+                                <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                            </span>
+                        </div>
+                        
+                        <!-- Roll Position -->
+                        {% if position.dte > 3 %}
+                        <div class="group relative inline-flex">
+                            <button onclick="rollPosition('{{ position.stock.ticker }}', {{ position.strike }}, '{{ position.option_type }}')" 
+                                    class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-semibold transition-all flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                </svg>
+                                Roll Forward
+                                <span class="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold text-purple-200 bg-purple-500 rounded-full cursor-help ml-1">i</span>
+                            </button>
+                            <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-64 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                Close this position and open a new one at the same strike for a later expiration date. Collect additional premium and extend time.
+                                <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                            </span>
+                        </div>
+                        {% endif %}
+                        
+                        <!-- 50% Profit Alert (Quick Button) -->
+                        <div class="group relative inline-flex">
+                            <button onclick="set50PercentAlert('{{ position.stock.ticker }}', {{ position.entry_premium }}, {{ position.id }})" 
+                                    class="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm font-semibold transition-all flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                50% Alert
+                                <span class="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold text-amber-200 bg-amber-500 rounded-full cursor-help ml-1">i</span>
+                            </button>
+                            <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-64 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                Quick alert for the 50% profit rule! Get notified when option premium drops to half your entry price - the ideal time to close and lock in profits.
+                                <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                            </span>
+                        </div>
+                        
+                        <!-- Set Price Alert -->
+                        <div class="group relative inline-flex">
+                            <button onclick="setAlert('{{ position.stock.ticker }}', {{ position.strike }})" 
+                                    class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 text-sm font-semibold transition-all flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                                </svg>
+                                Set Alert
+                                <span class="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold text-yellow-200 bg-yellow-500 rounded-full cursor-help ml-1">i</span>
+                            </button>
+                            <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-56 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                Get notified when {{ position.stock.ticker }} reaches a specific price. Useful for monitoring assignment risk or profit targets.
+                                <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                            </span>
+                        </div>
+                        
+                        <!-- Delete/Close Position (permanent) -->
+                        <div class="group relative inline-flex">
+                            <button onclick="deletePosition({{ position.id }})" 
+                                    class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-semibold transition-all flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                </svg>
+                                Remove
+                                <span class="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold text-red-200 bg-red-500 rounded-full cursor-help ml-1">i</span>
+                            </button>
+                            <span class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-56 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg z-10 whitespace-normal">
+                                Permanently delete this position from tracking. Use this if you closed the position manually in IBKR or it's no longer relevant.
+                                <span class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-4 border-transparent border-t-gray-900"></span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+            <div class="text-6xl mb-4">📊</div>
+            <h4 class="text-lg font-medium text-gray-900 mb-2">No Open Positions</h4>
+            <p class="text-gray-500 mb-6">Start by opening a position from the Discovery tab</p>
+            <button onclick="switchTab('discovery')" class="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
+                🔍 Go to Discovery
+            </button>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Recent Closed Positions -->
+    {% if closed_positions %}
+    <div class="mb-8">
+        <div class="bg-gradient-to-r from-gray-50 to-blue-50 border-2 border-gray-300 rounded-lg p-4 mb-4">
+            <h3 class="text-xl font-bold text-gray-900">📜 Recent Closed Positions</h3>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Position</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Entry</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Exit</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Days Held</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">P/L</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for position in closed_positions %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-3">
+                            <div class="font-bold text-gray-900">{{ position.stock.ticker }} ${{ position.strike }}</div>
+                            <div class="text-xs text-gray-500">{{ position.option_type }}</div>
+                        </td>
+                        <td class="px-4 py-3 text-right text-sm">
+                            <div>${{ position.total_premium|floatformat:2 }}</div>
+                            <div class="text-xs text-gray-500">{{ position.entry_date|date:"m/d/y" }}</div>
+                        </td>
+                        <td class="px-4 py-3 text-right text-sm">
+                            {% if position.exit_premium %}
+                            <div>${{ position.exit_premium|floatformat:2 }}</div>
+                            {% endif %}
+                            <div class="text-xs text-gray-500">
+                                {% if position.exit_date %}{{ position.exit_date|date:"m/d/y" }}{% else %}-{% endif %}
+                            </div>
+                        </td>
+                        <td class="px-4 py-3 text-right text-sm font-semibold">{{ position.days_held }}</td>
+                        <td class="px-4 py-3 text-right">
+                            {% if position.realized_pl %}
+                            <div class="font-bold {% if position.realized_pl > 0 %}text-green-700{% else %}text-red-700{% endif %}">
+                                ${{ position.realized_pl|floatformat:2 }}
+                            </div>
+                            {% else %}
+                            <span class="text-gray-400">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <span class="px-2 py-1 text-xs font-semibold rounded-full
+                                {% if position.status == 'EXPIRED' %}bg-green-100 text-green-800
+                                {% elif position.status == 'CLOSED' %}bg-blue-100 text-blue-800
+                                {% elif position.status == 'ASSIGNED' %}bg-yellow-100 text-yellow-800
+                                {% else %}bg-gray-100 text-gray-800{% endif %}">
+                                {{ position.status }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Close Position Modal -->
+<div id="closeModal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg shadow-2xl max-w-lg w-full">
+        <form id="closeForm" method="POST">
+            {% csrf_token %}
+            <div class="bg-gradient-to-r from-red-500 to-red-600 text-white px-6 py-4 rounded-t-lg">
+                <h3 class="text-xl font-bold">⚠️ Close Position</h3>
+                <p class="text-sm text-red-100 mt-1" id="closeModalSubtitle"></p>
+            </div>
+            <div class="p-6">
+                <!-- Position Summary -->
+                <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                            <span class="text-gray-500">Ticker</span>
+                            <p class="font-bold text-gray-900" id="closeTicker">-</p>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Type</span>
+                            <p class="font-bold text-gray-900" id="closeType">-</p>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Strike</span>
+                            <p class="font-bold text-gray-900" id="closeStrike">-</p>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Contracts</span>
+                            <p class="font-bold text-gray-900" id="closeContracts">-</p>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Premium Collected</span>
+                            <p class="font-bold text-green-700" id="closePremium">-</p>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Current Stock Price</span>
+                            <p class="font-bold text-blue-700" id="closeStockPrice">-</p>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Days Held</span>
+                            <p class="font-bold text-gray-900" id="closeDaysHeld">-</p>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Break-even</span>
+                            <p class="font-bold text-gray-900" id="closeBreakEven">-</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Quote Status -->
+                <div id="quoteStatus" class="mb-3 text-sm p-3 rounded-lg bg-blue-50 border border-blue-200">
+                    <span class="animate-pulse">⏳ Fetching live option price from IBKR...</span>
+                </div>
+
+                <!-- Exit Premium Input -->
+                <div class="mb-4">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Exit Premium (per share)</label>
+                    <input type="number" name="exit_premium" id="closeExitPremium" step="0.01" value="0" required
+                        class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-bold text-lg"
+                        oninput="updateClosePL()">
+                    <p class="text-xs text-gray-500 mt-1">Enter 0 if letting the option expire worthless (full profit)</p>
+                </div>
+
+                <!-- P/L Preview Box -->
+                <div id="closePLBox" class="border-2 rounded-lg p-4 mb-2 transition-all duration-200 bg-gray-50 border-gray-200">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm font-bold text-gray-700">📊 ESTIMATED PROFIT / LOSS</span>
+                        <span id="closePLBadge" class="px-2 py-0.5 text-xs font-bold rounded-full bg-gray-200 text-gray-600">-</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                            <span class="text-gray-500">Cost to Close</span>
+                            <p class="font-bold text-gray-900" id="closeCostToClose">$0.00</p>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Realized P/L</span>
+                            <p class="font-bold text-2xl" id="closeRealizedPL">$0.00</p>
+                        </div>
+                    </div>
+                    <div class="mt-2 pt-2 border-t border-gray-200 text-xs text-gray-500" id="closePLFormula"></div>
+                </div>
+            </div>
+            <div class="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
+                <button type="button" onclick="closeCloseModal()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-semibold">
+                    Cancel
+                </button>
+                <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold">
+                    ✅ Confirm Close
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+let closeModalData = null;
+
+function closePosition(positionId, btn) {
+    const d = btn.dataset;
+    closeModalData = {
+        ticker: d.ticker,
+        strike: parseFloat(d.strike),
+        type: d.type,
+        premium: parseFloat(d.premium),
+        entryPremium: parseFloat(d.entryPremium),
+        contracts: parseInt(d.contracts),
+        entryDate: d.entryDate,
+        expiry: d.expiry,
+        daysHeld: parseInt(d.daysHeld),
+        breakEven: d.breakEven,
+        stockPrice: parseFloat(d.stockPrice),
+        currentPremium: parseFloat(d.currentPremium) || 0,
+    };
+
+    // Set form action
+    document.getElementById('closeForm').action = `/ibkr/positions/close/${positionId}/`;
+
+    // Fill modal fields
+    document.getElementById('closeModalSubtitle').textContent =
+        `${closeModalData.ticker} $${closeModalData.strike.toFixed(2)} ${closeModalData.type}`;
+    document.getElementById('closeTicker').textContent = closeModalData.ticker;
+    document.getElementById('closeType').textContent = closeModalData.type;
+    document.getElementById('closeStrike').textContent = '$' + closeModalData.strike.toFixed(2);
+    document.getElementById('closeContracts').textContent = closeModalData.contracts;
+    document.getElementById('closePremium').textContent = '$' + closeModalData.premium.toFixed(2);
+    document.getElementById('closeStockPrice').textContent = '$' + closeModalData.stockPrice.toFixed(2);
+    document.getElementById('closeDaysHeld').textContent = closeModalData.daysHeld + ' days';
+    document.getElementById('closeBreakEven').textContent = '$' + closeModalData.breakEven;
+
+    // Set initial exit premium from DB if available, else 0
+    const initialPremium = closeModalData.currentPremium > 0 ? closeModalData.currentPremium.toFixed(2) : '0';
+    document.getElementById('closeExitPremium').value = initialPremium;
+    updateClosePL();
+
+    // Show modal
+    document.getElementById('closeModal').classList.remove('hidden');
+
+    // Fetch real-time quote
+    fetchLiveQuote();
+}
+
+async function fetchLiveQuote() {
+    if (!closeModalData) return;
+    const statusEl = document.getElementById('quoteStatus');
+    statusEl.className = 'mb-3 text-sm p-3 rounded-lg bg-blue-50 border border-blue-200';
+    statusEl.innerHTML = '<span class="animate-pulse">⏳ Fetching live option price from IBKR...</span>';
+
+    const right = closeModalData.type === 'PUT' ? 'P' : 'C';
+    const url = `{% url "ibkr:option_quote_api" %}?ticker=${closeModalData.ticker}&expiry=${closeModalData.expiry}&strike=${closeModalData.strike}&right=${right}`;
+
+    try {
+        const res = await fetch(url, { credentials: 'same-origin' });
+        let data;
+        try { data = await res.json(); } catch { data = null; }
+
+        if (data && data.success && data.mid) {
+            document.getElementById('closeExitPremium').value = data.mid.toFixed(2);
+            updateClosePL();
+            statusEl.className = 'mb-3 text-sm p-3 rounded-lg bg-green-50 border border-green-200';
+            statusEl.innerHTML = `✅ <strong>Live quote loaded!</strong> Bid: $${data.bid?.toFixed(2) || '-'} | Ask: $${data.ask?.toFixed(2) || '-'} | Mid: <strong>$${data.mid.toFixed(2)}</strong>`;
+        } else if (data && data.success && data.last) {
+            document.getElementById('closeExitPremium').value = data.last.toFixed(2);
+            updateClosePL();
+            statusEl.className = 'mb-3 text-sm p-3 rounded-lg bg-yellow-50 border border-yellow-200';
+            statusEl.innerHTML = `⚠️ Using last traded price: <strong>$${data.last.toFixed(2)}</strong> (no active bid/ask)`;
+        } else if (data && data.success) {
+            // Connected but market closed / no live data
+            const storedPremium = closeModalData.currentPremium;
+            if (storedPremium > 0) {
+                document.getElementById('closeExitPremium').value = storedPremium.toFixed(2);
+                updateClosePL();
+                statusEl.className = 'mb-3 text-sm p-3 rounded-lg bg-blue-50 border border-blue-200';
+                statusEl.innerHTML = `ℹ️ <strong>Gateway connected</strong> but market is closed. Using last known premium: <strong>$${storedPremium.toFixed(2)}</strong>.`;
+            } else {
+                statusEl.className = 'mb-3 text-sm p-3 rounded-lg bg-blue-50 border border-blue-200';
+                statusEl.innerHTML = 'ℹ️ <strong>Gateway connected</strong> but market is closed. Enter the exit premium manually.';
+            }
+        } else {
+            // Non-success response (503, 404, etc.) — try to auto-reconnect and retry once
+            statusEl.innerHTML = '<span class="animate-pulse">🔄 Reconnecting to gateway...</span>';
+            // Trigger a connect and retry
+            try {
+                await fetch('{% url "ibkr:gateway_connect_api" %}', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || '' }
+                });
+                // Retry the quote
+                const res2 = await fetch(url, { credentials: 'same-origin' });
+                let data2;
+                try { data2 = await res2.json(); } catch { data2 = null; }
+
+                if (data2 && data2.success && data2.mid) {
+                    document.getElementById('closeExitPremium').value = data2.mid.toFixed(2);
+                    updateClosePL();
+                    statusEl.className = 'mb-3 text-sm p-3 rounded-lg bg-green-50 border border-green-200';
+                    statusEl.innerHTML = `✅ <strong>Live quote loaded!</strong> Bid: $${data2.bid?.toFixed(2) || '-'} | Ask: $${data2.ask?.toFixed(2) || '-'} | Mid: <strong>$${data2.mid.toFixed(2)}</strong>`;
+                } else if (data2 && data2.success) {
+                    const storedPremium = closeModalData.currentPremium;
+                    if (storedPremium > 0) {
+                        document.getElementById('closeExitPremium').value = storedPremium.toFixed(2);
+                        updateClosePL();
+                    }
+                    statusEl.className = 'mb-3 text-sm p-3 rounded-lg bg-blue-50 border border-blue-200';
+                    statusEl.innerHTML = 'ℹ️ <strong>Gateway connected</strong> but no live quotes. Market may be closed.';
+                } else {
+                    showQuoteFallback(statusEl, data2?.error || data?.error);
+                }
+            } catch {
+                showQuoteFallback(statusEl, data?.error);
+            }
+        }
+    } catch (e) {
+        showQuoteFallback(statusEl, e.message);
+    }
+}
+
+function showQuoteFallback(statusEl, errorMsg) {
+    const storedPremium = closeModalData?.currentPremium || 0;
+    if (storedPremium > 0) {
+        document.getElementById('closeExitPremium').value = storedPremium.toFixed(2);
+        updateClosePL();
+        statusEl.className = 'mb-3 text-sm p-3 rounded-lg bg-yellow-50 border border-yellow-200';
+        statusEl.innerHTML = `⚠️ Using last known premium: <strong>$${storedPremium.toFixed(2)}</strong>. ${errorMsg ? '(' + errorMsg + ')' : ''} You can edit manually.`;
+    } else {
+        statusEl.className = 'mb-3 text-sm p-3 rounded-lg bg-yellow-50 border border-yellow-200';
+        statusEl.innerHTML = `⚠️ ${errorMsg || 'Could not fetch live quote'}. Enter the exit premium manually.`;
+    }
+}
+
+function updateClosePL() {
+    if (!closeModalData) return;
+    const exitPremium = parseFloat(document.getElementById('closeExitPremium').value) || 0;
+    const costToClose = exitPremium * closeModalData.contracts * 100;
+    const realizedPL = closeModalData.premium - costToClose;
+
+    document.getElementById('closeCostToClose').textContent = '$' + costToClose.toFixed(2);
+
+    const plEl = document.getElementById('closeRealizedPL');
+    const plBox = document.getElementById('closePLBox');
+    const badge = document.getElementById('closePLBadge');
+    const formula = document.getElementById('closePLFormula');
+
+    plEl.textContent = (realizedPL >= 0 ? '+' : '') + '$' + realizedPL.toFixed(2);
+    formula.textContent =
+        `$${closeModalData.premium.toFixed(2)} collected − ($${exitPremium.toFixed(2)} × ${closeModalData.contracts} × 100) = ${realizedPL >= 0 ? '+' : ''}$${realizedPL.toFixed(2)}`;
+
+    if (realizedPL > 0) {
+        plEl.className = 'font-bold text-2xl text-green-700';
+        plBox.className = 'border-2 rounded-lg p-4 mb-2 transition-all duration-200 bg-green-50 border-green-300';
+        badge.className = 'px-2 py-0.5 text-xs font-bold rounded-full bg-green-100 text-green-800';
+        badge.textContent = '✅ PROFIT';
+    } else if (realizedPL < 0) {
+        plEl.className = 'font-bold text-2xl text-red-700';
+        plBox.className = 'border-2 rounded-lg p-4 mb-2 transition-all duration-200 bg-red-50 border-red-300';
+        badge.className = 'px-2 py-0.5 text-xs font-bold rounded-full bg-red-100 text-red-800';
+        badge.textContent = '❌ LOSS';
+    } else {
+        plEl.className = 'font-bold text-2xl text-gray-700';
+        plBox.className = 'border-2 rounded-lg p-4 mb-2 transition-all duration-200 bg-gray-50 border-gray-200';
+        badge.className = 'px-2 py-0.5 text-xs font-bold rounded-full bg-gray-200 text-gray-600';
+        badge.textContent = 'BREAKEVEN';
+    }
+}
+
+function closeCloseModal() {
+    document.getElementById('closeModal').classList.add('hidden');
+}
+
+function set50PercentAlert(ticker, entryPremium, positionId) {
+    // Calculate 50% profit target
+    const targetPremium = (entryPremium / 2).toFixed(4);
+    const profitAmount = (entryPremium / 2).toFixed(2);
+    
+    // Show informational message
+    const message = `🎯 50% Profit Alert Setup\n\n` +
+                   `${ticker} Option Position:\n` +
+                   `Entry Premium: $${entryPremium.toFixed(4)}/share\n` +
+                   `Target Premium: $${targetPremium}/share (50% less)\n\n` +
+                   `You'll be notified when the option premium drops to $${targetPremium}.\n` +
+                   `At that point, you can buy it back and lock in $${profitAmount} profit per share.\n\n` +
+                   `✅ This follows the 50% profit rule - a key wheel strategy principle!\n\n` +
+                   `Set this alert now?`;
+    
+    if (confirm(message)) {
+        // Show processing notification
+        const processing = document.createElement('div');
+        processing.className = 'fixed top-4 right-4 bg-blue-600 text-white px-6 py-4 rounded-lg shadow-lg z-50';
+        processing.innerHTML = '⏳ Creating alert...';
+        document.body.appendChild(processing);
+        
+        // Send to backend API
+        fetch('/ibkr/api/alerts/create/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            },
+            body: JSON.stringify({
+                alert_type: '50_PERCENT_PROFIT',
+                position_id: positionId,
+                telegram_chat_id: localStorage.getItem('telegram_chat_id') || null
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            processing.remove();
+            
+            if (data.success) {
+                // Show success notification with detailed info
+                const notification = document.createElement('div');
+                notification.className = 'fixed top-4 right-4 bg-green-600 text-white px-6 py-4 rounded-lg shadow-lg z-50 max-w-md';
+                notification.innerHTML = `
+                    <div class="font-bold text-lg mb-2">✅ 50% Profit Alert Set!</div>
+                    <div class="text-sm space-y-1">
+                        <div>📊 ${ticker} Target: $${targetPremium}/share</div>
+                        <div>💰 Expected Profit: $${profitAmount}/share</div>
+                        <div>🔔 You'll be notified when reached</div>
+                    </div>
+                    <div class="text-xs mt-2 opacity-90">Checked every 5 minutes</div>
+                `;
+                document.body.appendChild(notification);
+                
+                // Auto-dismiss after 5 seconds
+                setTimeout(() => notification.remove(), 5000);
+            } else {
+                alert('❌ Error creating alert: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            processing.remove();
+            alert('❌ Failed to create alert: ' + error.message);
+        });
+    }
+}
+
+function rollPosition(ticker, strike, optionType) {
+    // Show informational notification before rolling
+    const message = `🔄 Rolling ${ticker} ${optionType}\n\n` +
+                   `This will:\n` +
+                   `1. Close your current $${strike} ${optionType}\n` +
+                   `2. Show available options for next month\n` +
+                   `3. Let you select a new expiration date\n\n` +
+                   `You'll collect additional premium by extending the position.\n\n` +
+                   `Continue to options chain?`;
+    
+    if (confirm(message)) {
+        // Redirect to options chain with filter for next month
+        const url = `/ibkr/options/${ticker}/?roll=true&strike=${strike}&type=${optionType}`;
+        window.location.href = url;
+    }
+}
+
+function setAlert(ticker, strike) {
+    // Show alert setup notification
+    const message = `🔔 Set Price Alert for ${ticker}\n\n` +
+                   `Current Strike: $${strike}\n` +
+                   `Stock must reach your target price to trigger notification.\n\n` +
+                   `Common alerts:\n` +
+                   `• Below strike (assignment risk)\n` +
+                   `• 50% profit target\n` +
+                   `• Break-even price\n\n` +
+                   `Enter target stock price:`;
+    
+    const alertPrice = prompt(message, (strike * 0.95).toFixed(2));
+    
+    if (alertPrice && !isNaN(alertPrice)) {
+        const price = parseFloat(alertPrice);
+        const direction = price > strike ? '📈 above' : '📉 below';
+        
+        // Show confirmation
+        alert(`✅ Alert Created!\n\n` +
+              `${ticker}: $${price.toFixed(2)} (${direction} strike)\n\n` +
+              `You'll be notified when the stock reaches this price.\n` +
+              `Check your alerts in the notifications section.`);
+        
+        console.log(`Alert set for ${ticker} at $${price.toFixed(2)}`);
+        // TODO: Implement alert system backend
+    }
+}
+
+function deletePosition(positionId) {
+    // Show detailed warning before deleting
+    const message = `⚠️ Delete Position?\n\n` +
+                   `This will PERMANENTLY remove this position from tracking.\n\n` +
+                   `Use this only if:\n` +
+                   `• You manually closed it in IBKR\n` +
+                   `• Position expired/assigned already\n` +
+                   `• It's a duplicate or error\n\n` +
+                   `This DOES NOT close the position in your broker!\n` +
+                   `It only removes it from this dashboard.\n\n` +
+                   `Are you sure you want to delete?`;
+    
+    if (confirm(message)) {
+        // Show processing notification
+        const notification = document.createElement('div');
+        notification.className = 'fixed top-4 right-4 bg-blue-600 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+        notification.innerHTML = '🔄 Deleting position...';
+        document.body.appendChild(notification);
+        
+        // Submit delete request
+        fetch(`/ibkr/positions/delete/${positionId}/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        })
+        .then(response => {
+            notification.remove();
+            if (response.ok) {
+                // Show success notification
+                const success = document.createElement('div');
+                success.className = 'fixed top-4 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+                success.innerHTML = '✅ Position deleted successfully';
+                document.body.appendChild(success);
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('❌ Failed to delete position. Please try again.');
+            }
+        })
+        .catch(error => {
+            notification.remove();
+            alert('❌ Error: ' + error.message);
+        });
+    }
+}
+
+// Close modal when clicking outside
+document.getElementById('closeModal')?.addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeCloseModal();
+    }
+});
+</script>

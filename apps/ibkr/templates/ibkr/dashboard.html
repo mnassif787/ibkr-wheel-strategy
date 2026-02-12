@@ -1,0 +1,348 @@
+{% extends 'base.html' %}
+{% load wheel_filters %}
+
+{% block title %}Dashboard - IBKR Wheel Strategy{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Last Sync & Refresh Bar -->
+    <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4 mb-4">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                {% if stocks %}
+                {% with latest_stock=stocks.0 %}
+                {% if latest_stock.last_updated %}
+                {% with status=latest_stock.last_updated|connection_status %}
+                <div class="flex items-center">
+                    <span class="mr-2">
+                        {% if status == 'live' %}
+                        <span class="flex h-3 w-3 relative">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                        </span>
+                        {% elif status == 'delayed' %}
+                        <span class="inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
+                        {% else %}
+                        <span class="inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                        {% endif %}
+                    </span>
+                    <div class="text-sm text-gray-700">
+                        Last synced: <strong>{{ latest_stock.last_updated|date:"m/d/Y H:i" }}</strong>
+                        <span class="text-xs text-gray-500">({{ latest_stock.last_updated|time_since_update }})</span>
+                    </div>
+                </div>
+                {% endwith %}
+                {% endif %}
+                {% endwith %}
+                {% else %}
+                <div class="text-sm text-gray-500">No sync data available</div>
+                {% endif %}
+            </div>
+            <div class="flex items-center space-x-2">
+                <div id="autoRefreshContainer"></div>
+                <a href="{% url 'ibkr:watchlist_refresh' %}" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm"
+                   onclick="return confirm('Refresh data for all watchlist stocks?')">
+                    🔄 Refresh Data
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex items-center justify-between mb-8">
+        <h1 class="text-3xl font-bold text-gray-900">IBKR Dashboard</h1>
+    </div>
+    
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-500">Total Stocks</p>
+                    <p class="text-3xl font-bold text-gray-900">{{ total_stocks }}</p>
+                </div>
+                <div class="text-4xl">📈</div>
+            </div>
+        </div>
+        
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-500">Open Signals</p>
+                    <p class="text-3xl font-bold text-gray-900">{{ total_signals }}</p>
+                </div>
+                <div class="text-4xl">⚡</div>
+            </div>
+        </div>
+        
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-500">Watchlist Items</p>
+                    <p class="text-3xl font-bold text-gray-900">{{ watchlist.count }}</p>
+                </div>
+                <div class="text-4xl">⭐</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Watchlist Management -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold">Watchlist</h2>
+        </div>
+        
+        <form method="post" action="{% url 'ibkr:watchlist_add' %}" class="mb-4">
+            {% csrf_token %}
+            <div class="flex gap-2">
+                <input type="text" name="ticker" placeholder="Enter ticker (e.g., AAPL)" 
+                       class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 font-medium">
+                    Add Ticker
+                </button>
+            </div>
+        </form>
+        
+        {% if watchlist %}
+        <div class="flex flex-wrap gap-2">
+            {% for item in watchlist %}
+            <div class="flex items-center bg-blue-50 border border-blue-200 rounded-lg px-3 py-1">
+                <span class="font-medium text-blue-900">{{ item.ticker }}</span>
+                <a href="{% url 'ibkr:watchlist_remove' item.ticker %}" 
+                   class="ml-2 text-red-500 hover:text-red-700"
+                   onclick="return confirm('Remove {{ item.ticker }} from watchlist?')">×</a>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-gray-500 text-sm">No tickers in watchlist. Add some to get started!</p>
+        {% endif %}
+    </div>
+    
+    <!-- AI Recommendations -->
+    {% if stocks %}
+    <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg shadow-sm border border-blue-200 p-6 mb-8">
+        <h2 class="text-xl font-semibold mb-4 flex items-center">
+            <span class="text-2xl mr-2">🤖</span>
+            AI-Powered Recommendations
+        </h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {% for stock in stocks|slice:":3" %}
+            <div class="bg-white rounded-lg p-4 border-l-4 
+                        {% if stock.ai_analysis.action == 'buy' %}border-green-500
+                        {% elif stock.ai_analysis.action == 'sell' %}border-red-500
+                        {% else %}border-gray-500{% endif %}">
+                <div class="flex justify-between items-start mb-2">
+                    <div>
+                        <h3 class="font-bold text-lg text-blue-600">{{ stock.ticker }}</h3>
+                        <p class="text-xs text-gray-500">{{ stock.name|truncatewords:4 }}</p>
+                    </div>
+                    <span class="px-2 py-1 rounded text-xs font-bold
+                                {% if stock.ai_analysis.action == 'buy' %}bg-green-500 text-white
+                                {% elif stock.ai_analysis.action == 'sell' %}bg-red-500 text-white
+                                {% else %}bg-gray-500 text-white{% endif %}">
+                        {{ stock.ai_analysis.recommendation }}
+                    </span>
+                </div>
+                <p class="text-xs text-gray-600 mb-2">{{ stock.ai_analysis.reasoning|truncatewords:15 }}</p>
+                <div class="flex justify-between items-center">
+                    <span class="text-xs text-gray-500">Confidence: {{ stock.ai_analysis.confidence }}%</span>
+                    <a href="{% url 'ibkr:options_ticker' stock.ticker %}" class="text-xs text-blue-600 hover:underline">View Options →</a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    
+    <!-- Recent Stocks -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold">Watchlist Stocks</h2>
+            <a href="{% url 'ibkr:stocks' %}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">View All →</a>
+        </div>
+        
+        {% if stocks %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ticker</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">52W Range</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">P/E</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Div Yield</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Market Cap</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Volume</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sector</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Updated</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for stock in stocks %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-3 whitespace-nowrap font-medium text-blue-600">
+                            <a href="{% url 'ibkr:options_ticker' stock.ticker %}" class="hover:underline">{{ stock.ticker }}</a>
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-900">{{ stock.name|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                            {% if stock.last_price %}
+                                ${{ stock.last_price|floatformat:2 }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-xs text-gray-600">
+                            {% if stock.fifty_two_week_low and stock.fifty_two_week_high %}
+                                <div>${{ stock.fifty_two_week_low|floatformat:2 }}</div>
+                                <div class="text-gray-400">to</div>
+                                <div>${{ stock.fifty_two_week_high|floatformat:2 }}</div>
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-sm">
+                            {% if stock.pe_ratio %}
+                                {{ stock.pe_ratio|floatformat:2 }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-sm">
+                            {% if stock.dividend_yield %}
+                                {{ stock.dividend_yield|floatformat:2 }}%
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-sm">
+                            {% if stock.market_cap %}
+                                {% if stock.market_cap >= 1000000000000 %}
+                                    ${{ stock.market_cap|floatformat:1 |slice:":-11" }}T
+                                {% elif stock.market_cap >= 1000000000 %}
+                                    ${{ stock.market_cap|floatformat:1 |slice:":-8" }}B
+                                {% elif stock.market_cap >= 1000000 %}
+                                    ${{ stock.market_cap|floatformat:1 |slice:":-5" }}M
+                                {% else %}
+                                    ${{ stock.market_cap }}
+                                {% endif %}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-xs text-gray-600">
+                            {% if stock.avg_volume %}
+                                {% if stock.avg_volume >= 1000000 %}
+                                    {{ stock.avg_volume|floatformat:0|slice:":-6" }}M
+                                {% elif stock.avg_volume >= 1000 %}
+                                    {{ stock.avg_volume|floatformat:0|slice:":-3" }}K
+                                {% else %}
+                                    {{ stock.avg_volume }}
+                                {% endif %}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-600">{{ stock.sector|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-xs text-gray-500">
+                            {% if stock.last_updated %}
+                                {{ stock.last_updated|date:"m/d/Y" }}<br>{{ stock.last_updated|time:"g:i A" }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-gray-500 text-sm">No stocks in watchlist. Add tickers above to get started!</p>
+        {% endif %}
+    </div>
+    
+    <!-- Recent Signals -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold">Open Signals</h2>
+            <a href="{% url 'ibkr:signals' %}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">View All →</a>
+        </div>
+        
+        {% if signals %}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {% for signal in signals %}
+            <div class="border-2 rounded-lg p-4 
+                        {% if signal.grade == 'A' %}border-green-300 bg-green-50
+                        {% elif signal.grade == 'B' %}border-yellow-300 bg-yellow-50
+                        {% else %}border-gray-300 bg-gray-50{% endif %}">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h3 class="text-xl font-bold text-blue-600">{{ signal.stock.ticker }}</h3>
+                        <p class="text-xs text-gray-500">{{ signal.get_signal_type_display }}</p>
+                    </div>
+                    <span class="px-3 py-1 rounded-lg font-bold text-white
+                                {% if signal.grade == 'A' %}bg-green-500
+                                {% elif signal.grade == 'B' %}bg-yellow-500
+                                {% else %}bg-red-500{% endif %}">
+                        {{ signal.grade|default:"C" }}
+                    </span>
+                </div>
+                
+                <div class="grid grid-cols-3 gap-2 mb-3 text-sm">
+                    <div>
+                        <p class="text-xs text-gray-500">Strike</p>
+                        <p class="font-semibold">${{ signal.option.strike }}</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-gray-500">Premium</p>
+                        <p class="font-semibold text-green-600">${{ signal.premium }}</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-gray-500">APY</p>
+                        <p class="font-semibold text-blue-600">{{ signal.apy_pct|floatformat:1 }}%</p>
+                    </div>
+                </div>
+                
+                <div class="text-xs text-gray-600 mb-2">
+                    <strong>Score:</strong> {{ signal.quality_score }}/100
+                    (Stock: {{ signal.stock_score|floatformat:0 }}, Technical: {{ signal.technical_score|floatformat:0 }}, Options: {{ signal.options_score|floatformat:0 }})
+                </div>
+                
+                {% if signal.technical_reason %}
+                <p class="text-xs text-gray-700 bg-white p-2 rounded border border-gray-200">
+                    {{ signal.technical_reason|truncatewords:20 }}
+                </p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-8">
+            <p class="text-gray-500 text-lg mb-2">No signals generated yet</p>
+            <p class="text-gray-400 text-sm mb-4">Generate signals by syncing data from IBKR</p>
+            <div class="space-y-2">
+                <code class="text-xs bg-gray-100 px-3 py-1 rounded block">python manage.py calculate_indicators</code>
+                <code class="text-xs bg-gray-100 px-3 py-1 rounded block">python manage.py sync_ibkr --signals</code>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+// Initialize auto-refresh for dashboard
+const dashboardAutoRefresh = new AutoRefresh(() => {
+    window.location.reload();
+}, {
+    interval: 60000, // 60 seconds for dashboard
+    enabledByDefault: false,
+    storageKey: 'global_autoRefresh'
+});
+
+// Create toggle UI
+createAutoRefreshToggle(dashboardAutoRefresh, 'autoRefreshContainer', {
+    label: 'Auto-Refresh',
+    icon: '🔄'
+});
+</script>
+{% endblock %}

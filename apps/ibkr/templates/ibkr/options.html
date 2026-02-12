@@ -1,0 +1,1193 @@
+{% extends 'base.html' %}
+{% load wheel_filters %}
+
+{% block title %}Options - IBKR Wheel Strategy{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Last Sync & Refresh Bar -->
+    <div class="bg-gradient-to-r from-green-50 to-teal-50 border border-green-200 rounded-lg p-4 mb-4">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-4">
+                {% if stock and stock.last_updated %}
+                {% with status=stock.last_updated|connection_status %}
+                <div class="flex items-center">
+                    <span class="mr-2">
+                        {% if status == 'live' %}
+                        <span class="flex h-3 w-3 relative">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                        </span>
+                        {% elif status == 'delayed' %}
+                        <span class="inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
+                        {% else %}
+                        <span class="inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                        {% endif %}
+                    </span>
+                    <div class="text-sm text-gray-700">
+                        Last synced: <strong>{{ stock.last_updated|date:"m/d/Y H:i" }}</strong>
+                        <span class="text-xs text-gray-500">({{ stock.last_updated|time_since_update }})</span>
+                    </div>
+                </div>
+                {% endwith %}
+                {% else %}
+                <div class="text-sm text-gray-500">No sync data available</div>
+                {% endif %}
+            </div>
+            <div class="flex items-center space-x-2">
+                <div id="autoRefreshContainer"></div>
+                <a href="{% url 'ibkr:watchlist_refresh' %}" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold text-sm">
+                    🔄 Refresh Data
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">Options Chain</h1>
+            {% if stock %}
+            <p class="text-gray-500 mt-1">Showing options for {{ stock.ticker }} - {{ stock.name }}</p>
+            <p class="text-sm text-gray-600 mt-1">Current Price: <span class="font-bold text-blue-600">${{ stock.last_price|default:"N/A" }}</span></p>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Filters Section -->
+    <div class="mb-6 space-y-4">
+        <div class="flex flex-wrap gap-4 items-center bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border-2 border-blue-200">
+            <!-- Expiration Filter -->
+            <div class="flex items-center space-x-2">
+                <label class="text-sm font-semibold text-gray-700">📅 Expiration:</label>
+                <select id="expiryFilter" onchange="applyFilters()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="all">All Dates</option>
+                    <option value="7d">Next 7 Days</option>
+                    <option value="21d">Next 21 Days</option>
+                    <option value="30d">Next 30 Days</option>
+                    <option value="45d">Next 45 Days (Ideal)</option>
+                    <option value="60d">Next 60 Days</option>
+                    <option value="90d">Next 90 Days</option>
+                </select>
+            </div>
+            
+            <!-- Entry Quality Filter -->
+            <div class="flex items-center space-x-2">
+                <label class="text-sm font-semibold text-gray-700">⭐ Entry Quality:</label>
+                <select id="qualityFilter" onchange="applyFilters()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="all">Show All</option>
+                    <option value="excellent">✓ Excellent Only</option>
+                    <option value="good">✓ Good+ Only</option>
+                    <option value="fair">~ Fair+ Only</option>
+                </select>
+            </div>
+            
+            <!-- Option Type Filter -->
+            <div class="flex items-center space-x-2">
+                <label class="text-sm font-semibold text-gray-700">📊 Type:</label>
+                <select id="typeFilter" onchange="applyFilters()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="all">Calls & Puts</option>
+                    <option value="PUT">Puts Only</option>
+                    <option value="CALL">Calls Only</option>
+                </select>
+            </div>
+            
+            <!-- Results Counter -->
+            <div class="ml-auto flex items-center space-x-3">
+                <span class="text-sm font-semibold text-gray-700">
+                    <span id="filteredCount">{{ options|length }}</span> of {{ options|length }} options
+                </span>
+                <button onclick="resetFilters()" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm font-semibold">
+                    🔄 Reset
+                </button>
+            </div>
+        </div>
+        
+        <!-- Auto-refresh Toggle -->
+        <div class="flex justify-end items-center bg-green-50 p-3 rounded-lg border border-green-200">
+            <button onclick="toggleCalculator()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-semibold text-sm">
+                🧮 Wheel Calculator
+            </button>
+        </div>
+    </div>
+    
+    <!-- Wheel Strategy Calculator -->
+    <div id="calculator" class="hidden mb-6 bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-300 rounded-lg p-6 shadow-lg">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-bold text-purple-900">🧮 Wheel Strategy Calculator</h3>
+            <button onclick="openPositionModal()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm">
+                📊 Open Position
+            </button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Inputs -->
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Stock Price</label>
+                    <input type="number" id="calcStockPrice" value="{{ stock.last_price|default:'100' }}" step="0.01" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Strike Price</label>
+                    <input type="number" id="calcStrike" value="95" step="0.50" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Premium (per share)</label>
+                    <input type="number" id="calcPremium" value="1.50" step="0.01" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Days to Expiration (DTE)</label>
+                    <input type="number" id="calcDTE" value="30" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Number of Contracts</label>
+                    <input type="number" id="calcContracts" value="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
+                </div>
+                <button onclick="calculateWheel()" class="w-full px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold">
+                    Calculate
+                </button>
+            </div>
+            
+            <!-- Results -->
+            <div class="bg-white rounded-lg p-4 space-y-3">
+                <h4 class="font-bold text-gray-900 mb-3">📊 Results</h4>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between border-b pb-2 bg-purple-50 px-2 py-2 rounded">
+                        <span class="text-gray-600">Expected Premium Payment:</span>
+                        <span id="resultExpectedPremium" class="font-bold text-purple-700 text-lg">$0.00</span>
+                    </div>
+                    <div class="flex justify-between border-b pb-2">
+                        <span class="text-gray-600">Total Premium:</span>
+                        <span id="resultPremium" class="font-bold text-green-700">$0.00</span>
+                    </div>
+                    <div class="flex justify-between border-b pb-2">
+                        <span class="text-gray-600">Break-even Price:</span>
+                        <span id="resultBreakeven" class="font-bold text-blue-700">$0.00</span>
+                    </div>
+                    <div class="flex justify-between border-b pb-2">
+                        <span class="text-gray-600">Return on Risk:</span>
+                        <span id="resultROR" class="font-bold text-purple-700">0%</span>
+                    </div>
+                    <div class="flex justify-between border-b pb-2">
+                        <span class="text-gray-600">Annualized Yield (APY):</span>
+                        <span id="resultAPY" class="font-bold text-green-700">0%</span>
+                    </div>
+                    <div class="flex justify-between border-b pb-2">
+                        <span class="text-gray-600">Capital Required:</span>
+                        <span id="resultCapital" class="font-bold text-gray-900">$0</span>
+                    </div>
+                    <div class="mt-4 p-3 bg-blue-50 rounded border border-blue-200">
+                        <p class="text-xs font-semibold text-blue-900 mb-1">💡 Strategy Outcome:</p>
+                        <p id="resultOutcome" class="text-xs text-blue-800">Calculate to see outcome</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    {% if stock and stock.ai_analysis %}
+    <!-- AI Analysis for Wheel Strategy -->
+    <div class="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-200 rounded-lg p-6 mb-6">
+        <h2 class="text-xl font-bold mb-4 flex items-center">
+            <span class="text-2xl mr-2">🎯</span>
+            Wheel Strategy Analysis for {{ stock.ticker }}
+        </h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div class="bg-white p-4 rounded-lg border border-purple-200">
+                <h3 class="text-sm font-semibold text-gray-600 mb-2">Current Price</h3>
+                <p class="text-2xl font-bold text-blue-600">${{ stock.last_price }}</p>
+                {% if stock.indicators %}
+                <p class="text-xs text-gray-500 mt-1">Support: ${{ stock.indicators.support_level_1|default:"N/A" }}</p>
+                <p class="text-xs text-gray-500">Resistance: ${{ stock.indicators.resistance_level_1|default:"N/A" }}</p>
+                {% endif %}
+            </div>
+            <div class="bg-gradient-to-br from-purple-50 to-pink-50 p-4 rounded-lg border-2 {% if stock.ai_analysis.action == 'buy' %}border-green-300{% elif stock.ai_analysis.action == 'sell' %}border-red-300{% else %}border-gray-300{% endif %}">
+                <div class="flex items-start justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-gray-700">🤖 Trading Action</h3>
+                    <div class="{% if stock.ai_analysis.action == 'buy' %}bg-green-100 border-green-400{% elif stock.ai_analysis.action == 'sell' %}bg-red-100 border-red-400{% else %}bg-gray-100 border-gray-400{% endif %} border-2 rounded-lg px-2 py-1">
+                        <div class="text-xs font-semibold {% if stock.ai_analysis.action == 'buy' %}text-green-700{% elif stock.ai_analysis.action == 'sell' %}text-red-700{% else %}text-gray-700{% endif %}">SUCCESS RATE</div>
+                        <div class="text-xl font-bold {% if stock.ai_analysis.action == 'buy' %}text-green-900{% elif stock.ai_analysis.action == 'sell' %}text-red-900{% else %}text-gray-900{% endif %}">{{ stock.ai_analysis.confidence }}%</div>
+                    </div>
+                </div>
+                <span class="px-4 py-2 rounded-lg font-bold text-white inline-block
+                            {% if stock.ai_analysis.action == 'buy' %}bg-green-500
+                            {% elif stock.ai_analysis.action == 'sell' %}bg-red-500
+                            {% else %}bg-gray-500{% endif %}">
+                    {{ stock.ai_analysis.recommendation }}
+                </span>
+                <div class="mt-2 w-full bg-gray-200 rounded-full h-2">
+                    <div class="h-2 rounded-full transition-all {% if stock.ai_analysis.action == 'buy' %}bg-green-500{% elif stock.ai_analysis.action == 'sell' %}bg-red-500{% else %}bg-gray-500{% endif %}" style="width: {{ stock.ai_analysis.confidence }}%"></div>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-lg border border-purple-200">
+                <h3 class="text-sm font-semibold text-gray-600 mb-2">Wheel Strategy Rating</h3>
+                <span class="px-3 py-1 rounded text-sm font-bold inline-block
+                            {% if stock.ai_analysis.strategy_color == 'green' %}bg-green-500 text-white
+                            {% elif stock.ai_analysis.strategy_color == 'blue' %}bg-blue-500 text-white
+                            {% elif stock.ai_analysis.strategy_color == 'yellow' %}bg-yellow-500 text-white
+                            {% else %}bg-red-500 text-white{% endif %}">
+                    {{ stock.ai_analysis.strategy_rating }}
+                </span>
+                <p class="text-xs text-gray-600 mt-2">Score: {{ stock.ai_analysis.wheel_score }}/100</p>
+            </div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-white p-4 rounded-lg border border-purple-200">
+                <h3 class="font-semibold mb-2 text-purple-900">🎯 Wheel Strategy Signals</h3>
+                <div class="space-y-1">
+                    {% for signal in stock.ai_analysis.wheel_signals %}
+                    <p class="text-xs text-gray-700">{{ signal }}</p>
+                    {% empty %}
+                    <p class="text-xs text-gray-500">No wheel-specific signals</p>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-lg border border-purple-200">
+                <h3 class="font-semibold mb-2 text-purple-900">📊 Technical Analysis</h3>
+                <div class="space-y-1">
+                    {% for signal in stock.ai_analysis.signals|slice:":5" %}
+                    <p class="text-xs text-gray-600">{{ signal }}</p>
+                    {% empty %}
+                    <p class="text-xs text-gray-500">Calculate indicators first</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        
+        <div class="mt-4 bg-white bg-opacity-80 border-2 {% if stock.ai_analysis.action == 'buy' %}border-green-300{% elif stock.ai_analysis.action == 'sell' %}border-red-300{% else %}border-blue-300{% endif %} rounded-lg p-4">
+            <div class="text-xs font-bold text-gray-700 mb-2">📋 WHY THIS RECOMMENDATION:</div>
+            <p class="text-sm {% if stock.ai_analysis.action == 'buy' %}text-green-900{% elif stock.ai_analysis.action == 'sell' %}text-red-900{% else %}text-blue-900{% endif %}">
+                {{ stock.ai_analysis.reasoning }}
+            </p>
+        </div>
+    </div>
+    {% elif stock %}
+    <!-- No AI analysis available -->
+    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+        <p class="text-sm text-yellow-800">
+            <strong>⚠️ Technical indicators not calculated.</strong> Run <code class="bg-yellow-100 px-2 py-1 rounded">python manage.py calculate_indicators --ticker {{ stock.ticker }}</code> to see AI analysis.
+        </p>
+    </div>
+    {% endif %}
+    
+    {% if options %}
+    <!-- Check if options have market data -->
+    {% with first_option=options.0 %}
+    {% if not first_option.bid and not first_option.ask %}
+    <div class="bg-red-50 border-2 border-red-300 rounded-lg p-5 mb-6">
+        <div class="flex items-start">
+            <div class="flex-shrink-0">
+                <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-lg font-bold text-red-900">⚠️ No Market Data Available</h3>
+                <p class="mt-2 text-sm text-red-800">
+                    The options contracts exist but have <strong>no pricing data</strong> (bid, ask, delta, volume, open interest). 
+                    IBKR sync requires market data subscriptions and proper API configuration.
+                </p>
+                
+                <div class="mt-4 bg-white border border-red-200 rounded-lg p-4">
+                    <p class="text-sm font-semibold text-red-900 mb-3">📋 Troubleshooting Steps:</p>
+                    
+                    <div class="space-y-3 text-sm text-red-800">
+                        <div class="bg-green-50 border border-green-300 rounded p-3">
+                            <p class="font-semibold text-green-900 mb-2">✨ Quick Fix: Use Yahoo Finance (Free!)</p>
+                            <p class="text-sm text-green-800 mb-2">Get options data instantly without IBKR subscriptions:</p>
+                            <a href="{% url 'ibkr:sync_yfinance_options' %}" class="inline-block px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold">
+                                📊 Sync Options from Yahoo Finance
+                            </a>
+                            <p class="text-xs text-green-700 mt-2">
+                                <strong>Note:</strong> Yahoo Finance provides bid/ask, volume, OI, and IV. Delta is estimated (accurate within 5-10%).
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <p class="font-semibold mb-1">1️⃣ Enable IBKR API Write Access:</p>
+                            <ul class="list-disc list-inside ml-4 space-y-1 text-xs">
+                                <li>Open IB Gateway or TWS</li>
+                                <li>Go to <strong>File → Global Configuration → API → Settings</strong></li>
+                                <li><strong>Uncheck "Read-Only API"</strong></li>
+                                <li>Check "Enable ActiveX and Socket Clients"</li>
+                                <li>Click <strong>OK</strong> and restart IB Gateway/TWS</li>
+                            </ul>
+                        </div>
+                        
+                        <div>
+                            <p class="font-semibold mb-1">2️⃣ Verify Market Data Subscriptions:</p>
+                            <ul class="list-disc list-inside ml-4 space-y-1 text-xs">
+                                <li>IBKR requires <strong>active market data subscriptions</strong> for live options pricing</li>
+                                <li>US Equity and Options Add-On Streaming Bundle ($4.50/month)</li>
+                                <li>Check your subscriptions at: <strong>Account Management → Market Data Subscriptions</strong></li>
+                            </ul>
+                        </div>
+                        
+                        <div>
+                            <p class="font-semibold mb-1">3️⃣ Alternative: Use Real Broker Data:</p>
+                            <ul class="list-disc list-inside ml-4 space-y-1 text-xs">
+                                <li>If you can't enable write access or lack market data subscriptions</li>
+                                <li>Consider using a paper trading account (free market data during market hours)</li>
+                                <li>Or connect to a different broker API that provides free options data</li>
+                            </ul>
+                        </div>
+                        
+                        <div>
+                            <p class="font-semibold mb-1">4️⃣ Run Sync After Configuration:</p>
+                            <p class="ml-4"><code class="bg-red-100 px-2 py-1 rounded font-mono">python manage.py sync_ibkr</code></p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-4 bg-yellow-50 border border-yellow-300 rounded p-3">
+                    <p class="text-xs text-yellow-900">
+                        <strong>💡 Why No Data?</strong> IBKR's API requires proper permissions and market data subscriptions. 
+                        Read-Only mode only allows viewing account data, not fetching live market data. 
+                        Market data subscriptions are separate from trading permissions and require a monthly fee unless using paper trading.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endwith %}
+    
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <div class="bg-gradient-to-r from-blue-50 to-purple-50 px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-bold text-gray-900">🎯 Wheel Strategy Options ({{ options|length }} contracts)</h2>
+            <div class="flex flex-wrap gap-4 mt-2 text-xs">
+                <span class="flex items-center">
+                    <span class="w-3 h-3 bg-green-500 rounded mr-1"></span>
+                    <span class="text-gray-600">⭐ Green rows = Delta 0.25-0.35 (Optimal for wheel)</span>
+                </span>
+                <span class="flex items-center">
+                    <span class="w-3 h-3 bg-yellow-400 rounded mr-1"></span>
+                    <span class="text-gray-600">📍 Yellow rows = ATM (At-The-Money, ±2% from current price)</span>
+                </span>
+                <span class="flex items-center">
+                    <span class="text-purple-600 font-bold mr-1">💡</span>
+                    <span class="text-gray-600">Click any row to auto-fill calculator with strike & premium</span>
+                </span>
+            </div>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase">Type</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Strike</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase">vs Price</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Expiry</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase">DTE</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase bg-purple-50">Good Entry?</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Premium</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase bg-green-50">APY %</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase bg-blue-50">Delta</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Prob%</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">IV</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Vol</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">OI</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase bg-yellow-50">Break-even</th>
+                        <th class="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase bg-red-50">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for option in options %}
+                    {% with entry_quality=option|is_good_entry %}
+                    <tr class="option-row hover:bg-blue-50 cursor-pointer
+                        {% if entry_quality == 'excellent' %}bg-green-50 border-l-4 border-green-600{% elif entry_quality == 'good' %}bg-blue-50 border-l-4 border-blue-500{% endif %}
+                        {% if stock.last_price %}
+                            {% with diff_pct=option|price_vs_strike_pct:stock.last_price %}
+                            {% if diff_pct >= -2 and diff_pct <= 2 %}
+                            atm-strike bg-yellow-100 border-l-4 border-yellow-500 ring-2 ring-yellow-400
+                            {% endif %}
+                            {% endwith %}
+                        {% endif %}"
+                        data-expiry="{{ option.expiry_date|date:'Y-m-d' }}"
+                        data-dte="{{ option.dte }}"
+                        data-quality="{{ entry_quality }}"
+                        data-type="{{ option.option_type }}"
+                        data-strike="{{ option.strike }}"
+                        data-premium="{% if option.mid_price %}{{ option.mid_price }}{% else %}0{% endif %}"
+                        data-stock-price="{{ stock.last_price|default:'0' }}"
+                        onclick="fillCalculator(this)">
+                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                            <div class="flex flex-col items-center">
+                                <span class="px-2 py-1 text-xs font-bold rounded {% if option.option_type == 'PUT' %}bg-red-100 text-red-800{% else %}bg-green-100 text-green-800{% endif %}">
+                                    {{ option.option_type }}
+                                </span>
+                                {% if option|is_wheel_delta %}
+                                <span class="text-xs text-green-700 font-bold mt-1">⭐</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right">
+                            <div class="flex flex-col items-end">
+                                <span class="font-bold text-lg text-gray-900">${{ option.strike }}</span>
+                                {% if stock.last_price %}
+                                    {% with diff_pct=option|price_vs_strike_pct:stock.last_price %}
+                                    {% if diff_pct >= -2 and diff_pct <= 2 %}
+                                    <span class="text-xs font-bold text-yellow-700 bg-yellow-200 px-2 py-0.5 rounded-full mt-1">📍 ATM</span>
+                                    {% endif %}
+                                    {% endwith %}
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                            {% if stock.last_price %}
+                            {% with diff_pct=option|price_vs_strike_pct:stock.last_price %}
+                            <span class="text-xs font-semibold {% if diff_pct > 0 %}text-green-600{% elif diff_pct < 0 %}text-red-600{% else %}text-gray-600{% endif %}">
+                                {% if diff_pct > 0 %}+{% endif %}{{ diff_pct }}%
+                            </span>
+                            {% endwith %}
+                            {% else %}
+                            <span class="text-xs text-gray-400">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
+                            {{ option.expiry_date|date:"m/d/Y" }}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-center">
+                            <span class="px-2 py-1 text-xs font-semibold rounded-full {% if option.dte <= 7 %}bg-red-100 text-red-800{% elif option.dte <= 30 %}bg-yellow-100 text-yellow-800{% else %}bg-blue-100 text-blue-800{% endif %}">
+                                {{ option.dte }}d
+                            </span>
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-center bg-purple-50">
+                            {% if entry_quality == 'excellent' %}
+                            <span class="px-3 py-1 text-xs font-bold rounded-full bg-green-500 text-white">✓ EXCELLENT</span>
+                            {% elif entry_quality == 'good' %}
+                            <span class="px-3 py-1 text-xs font-bold rounded-full bg-blue-500 text-white">✓ GOOD</span>
+                            {% elif entry_quality == 'fair' %}
+                            <span class="px-3 py-1 text-xs font-semibold rounded-full bg-yellow-400 text-gray-900">~ FAIR</span>
+                            {% elif entry_quality == 'poor' %}
+                            <span class="px-3 py-1 text-xs font-semibold rounded-full bg-gray-300 text-gray-700">✗ POOR</span>
+                            {% else %}
+                            <span class="text-xs text-gray-400">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right">
+                            {% if option.bid and option.ask %}
+                            <div class="font-semibold text-green-700">${{ option.mid_price|floatformat:2 }}</div>
+                            <div class="text-xs text-gray-500">{{ option.bid|floatformat:2 }}-{{ option.ask|floatformat:2 }}</div>
+                            {% else %}
+                            <span class="text-xs text-red-500 font-semibold">No Data</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right bg-green-50">
+                            {% if option.bid and option.ask and option.mid_price > 0 %}
+                            {% with apy=option|calculate_apy %}
+                            <span class="font-bold text-lg {% if apy >= 25 %}text-green-700{% elif apy >= 15 %}text-blue-700{% else %}text-gray-700{% endif %}">
+                                {{ apy }}%
+                            </span>
+                            {% endwith %}
+                            {% else %}
+                            <span class="text-xs text-red-500 font-semibold">No Data</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right bg-blue-50">
+                            {% if option.delta and option.delta != 0 %}
+                            {% with delta_abs=option.delta|abs_value|mul:100 %}
+                            <span class="px-2 py-1 text-xs font-bold rounded {% if delta_abs >= 25 and delta_abs <= 35 %}bg-green-100 text-green-800{% elif delta_abs < 25 %}bg-blue-100 text-blue-800{% else %}bg-orange-100 text-orange-800{% endif %}">
+                                {{ option.delta|floatformat:2 }}
+                            </span>
+                            {% endwith %}
+                            {% else %}
+                            <span class="text-xs text-red-500 font-semibold">No Data</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right">
+                            {% if option.delta and option.delta != 0 %}
+                            {% with prob=option.delta|abs_value|mul:100 %}
+                            <span class="text-sm font-semibold {% if prob >= 40 %}text-red-700{% elif prob >= 25 %}text-orange-700{% else %}text-green-700{% endif %}">
+                                {{ prob|floatformat:0 }}%
+                            </span>
+                            {% endwith %}
+                            {% else %}
+                            <span class="text-xs text-red-500 font-semibold">No Data</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-sm">
+                            {% if option.implied_volatility and option.implied_volatility > 0 %}
+                            {% with iv_pct=option.implied_volatility|mul:100 %}
+                            <span class="{% if iv_pct > 60 %}text-red-700{% elif iv_pct > 40 %}text-orange-700{% else %}text-blue-700{% endif %}">
+                                {{ iv_pct|floatformat:0 }}%
+                            </span>
+                            {% endwith %}
+                            {% else %}
+                            <span class="text-xs text-gray-400">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-sm">
+                            {% if option.volume is not None %}
+                            <span class="{% if option.volume >= 100 %}text-green-700 font-semibold{% elif option.volume >= 10 %}text-gray-700{% else %}text-gray-400{% endif %}">
+                                {{ option.volume }}
+                            </span>
+                            {% else %}
+                            <span class="text-xs text-gray-400">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right text-sm">
+                            {% if option.open_interest is not None %}
+                            <span class="{% if option.open_interest >= 500 %}text-green-700 font-semibold{% elif option.open_interest >= 100 %}text-gray-700{% else %}text-gray-400{% endif %}">
+                                {{ option.open_interest }}
+                            </span>
+                            {% else %}
+                            <span class="text-xs text-gray-400">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-right font-medium text-sm bg-yellow-50">
+                            {% if option.bid and option.ask %}
+                            <span class="{% if option.option_type == 'PUT' %}text-blue-700{% else %}text-green-700{% endif %}">
+                                ${{ option|calculate_breakeven }}
+                            </span>
+                            {% else %}
+                            <span class="text-xs text-red-500 font-semibold">No Data</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap text-center bg-red-50">
+                            <button type="button" onclick="event.stopPropagation(); openSellModal(this.closest('tr'))" class="px-3 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold text-xs">
+                                🚀 Sell
+                            </button>
+                        </td>
+                    </tr>
+                    {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="bg-gray-50 px-6 py-4 border-t border-gray-200">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div>
+                    <p class="font-semibold text-gray-700">📊 APY %</p>
+                    <p class="text-xs text-gray-600">Annualized premium return. Target: >20%</p>
+                </div>
+                <div>
+                    <p class="font-semibold text-gray-700">🎯 Delta</p>
+                    <p class="text-xs text-gray-600">Wheel sweet spot: 0.25-0.35 (~25-35% probability)</p>
+                </div>
+                <div>
+                    <p class="font-semibold text-gray-700">💰 Break-even</p>
+                    <p class="text-xs text-gray-600">Price where you break even if assigned</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+        <div class="text-6xl mb-4">🎲</div>
+        <h3 class="text-lg font-medium text-gray-900 mb-2">No Options Data</h3>
+        <p class="text-gray-500 mb-6">
+            Options data will appear here after syncing with IBKR.
+        </p>
+        <div class="bg-gray-50 rounded-lg p-4 max-w-md mx-auto">
+            <code class="text-sm text-gray-700">python manage.py sync_ibkr</code>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Open Position Modal -->
+<div id="positionModal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <form id="positionForm" action="{% url 'ibkr:open_position' %}" method="POST">
+            {% csrf_token %}
+            <div class="bg-gradient-to-r from-green-500 to-blue-500 text-white px-6 py-4 rounded-t-lg">
+                <h3 class="text-2xl font-bold">📊 Open New Position</h3>
+                <p class="text-sm text-green-100 mt-1">Track this option and get AI recommendations</p>
+            </div>
+            
+            <div class="p-6 space-y-4">
+                <!-- Stock Info -->
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <span class="text-gray-600">Stock:</span>
+                            <span id="modalTicker" class="font-bold text-blue-900">-</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-600">Current Price:</span>
+                            <span id="modalStockPrice" class="font-bold text-blue-900">-</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Option Details -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Option Type</label>
+                        <input type="text" id="modalOptionType" name="option_type" readonly class="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-700 font-bold">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Strike Price</label>
+                        <input type="number" id="modalStrike" name="strike" readonly step="0.01" class="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-700 font-bold">
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Expiration Date</label>
+                        <input type="date" id="modalExpiry" name="expiry_date" readonly class="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-700">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Days to Expiry</label>
+                        <input type="text" id="modalDTE" readonly class="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg text-gray-700">
+                    </div>
+                </div>
+                
+                <!-- Entry Details -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Premium (per share)</label>
+                        <input type="number" id="modalPremium" name="premium" step="0.01" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 font-bold text-green-700">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">Number of Contracts</label>
+                        <input type="number" id="modalContracts" name="contracts" value="1" min="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 font-bold">
+                    </div>
+                </div>
+                
+                <!-- Total Premium Display -->
+                <div class="bg-green-50 border-2 border-green-400 rounded-lg p-4">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-700 font-semibold">Total Premium You'll Collect:</span>
+                        <span id="modalTotalPremium" class="text-2xl font-bold text-green-700">$0.00</span>
+                    </div>
+                </div>
+                
+                <!-- Hidden fields -->
+                <input type="hidden" id="modalTickerInput" name="ticker">
+                <input type="hidden" id="modalStockPriceInput" name="stock_price">
+                <input type="hidden" id="modalDeltaInput" name="delta">
+            </div>
+            
+            <div class="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
+                <button type="button" onclick="closePositionModal()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-semibold">
+                    Cancel
+                </button>
+                <button type="button" onclick="placeIBKROrderFromModal()" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold">
+                    🚀 Place IBKR Order
+                </button>
+                <button type="submit" class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold">
+                    📊 Track Only
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Quick Sell Order Modal -->
+<div id="sellModal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg shadow-2xl max-w-lg w-full">
+        <div class="bg-gradient-to-r from-red-600 to-orange-500 text-white px-6 py-4 rounded-t-lg">
+            <h3 class="text-2xl font-bold">🚀 Sell Option Order</h3>
+            <p class="text-sm text-red-100 mt-1">Place order directly on IBKR</p>
+        </div>
+        
+        <div class="p-6 space-y-4">
+            <!-- Order Summary Card -->
+            <div class="bg-blue-50 border-2 border-blue-300 rounded-lg p-4">
+                <div class="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                        <span class="text-gray-500">Ticker</span>
+                        <div id="sellTicker" class="font-bold text-xl text-blue-900">-</div>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Type</span>
+                        <div id="sellType" class="font-bold text-xl text-red-700">-</div>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Strike</span>
+                        <div id="sellStrike" class="font-bold text-lg text-gray-900">-</div>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Expiry</span>
+                        <div id="sellExpiry" class="font-bold text-gray-900">-</div>
+                        <div id="sellDTE" class="text-xs text-gray-500"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Editable Fields -->
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Limit Price (per share)</label>
+                    <div class="flex items-center">
+                        <span class="text-gray-500 font-bold mr-1">$</span>
+                        <input type="number" id="sellLimitPrice" step="0.01" class="flex-1 px-3 py-2 border-2 border-green-400 rounded-lg focus:ring-2 focus:ring-green-500 font-bold text-green-700 text-lg" oninput="updateSellTotal()">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-1">Contracts</label>
+                    <input type="number" id="sellContracts" value="1" min="1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 font-bold text-lg" oninput="updateSellTotal()">
+                </div>
+            </div>
+
+            <!-- Premium Total -->
+            <div class="bg-green-50 border-2 border-green-400 rounded-lg p-4">
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-700 font-semibold">Total Premium:</span>
+                    <span id="sellTotalPremium" class="text-2xl font-bold text-green-700">$0.00</span>
+                </div>
+            </div>
+
+            <!-- Track in DB -->
+            <div class="flex items-center space-x-2">
+                <input type="checkbox" id="sellTrackPosition" checked class="w-4 h-4 text-blue-600 rounded">
+                <label for="sellTrackPosition" class="text-sm text-gray-700">Also track this position in the database</label>
+            </div>
+
+            <!-- Order Result -->
+            <div id="sellResult" class="hidden rounded-lg p-4 text-sm"></div>
+        </div>
+
+        <div class="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
+            <button type="button" onclick="closeSellModal()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-semibold">
+                Cancel
+            </button>
+            <button type="button" id="sellSubmitBtn" onclick="submitSellOrder()" class="px-6 py-3 bg-gradient-to-r from-red-600 to-orange-500 text-white rounded-lg hover:from-red-700 hover:to-orange-600 font-bold text-lg">
+                🚀 Place SELL Order
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+let selectedOptionData = null;
+let sellModalData = null;
+const totalOptions = {{ options|length }};
+
+function toggleCalculator() {
+    const calc = document.getElementById('calculator');
+    calc.classList.toggle('hidden');
+}
+
+// Fill calculator when clicking on an option row
+function fillCalculator(row) {
+    const stockPrice = parseFloat(row.dataset.stockPrice);
+    const strike = parseFloat(row.dataset.strike);
+    const premium = parseFloat(row.dataset.premium);
+    const dte = parseInt(row.dataset.dte);
+    const optionType = row.dataset.type;
+    const expiry = row.dataset.expiry;
+    
+    // Store selected option data for later
+    selectedOptionData = {
+        ticker: '{{ stock.ticker }}',
+        stockPrice: stockPrice,
+        strike: strike,
+        premium: premium,
+        dte: dte,
+        optionType: optionType,
+        expiry: expiry
+    };
+    
+    // Show calculator if hidden
+    const calc = document.getElementById('calculator');
+    if (calc.classList.contains('hidden')) {
+        calc.classList.remove('hidden');
+    }
+    
+    // Scroll to calculator
+    calc.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    
+    // Fill in values
+    document.getElementById('calcStockPrice').value = stockPrice.toFixed(2);
+    document.getElementById('calcStrike').value = strike.toFixed(2);
+    document.getElementById('calcPremium').value = premium > 0 ? premium.toFixed(2) : '0.00';
+    document.getElementById('calcDTE').value = dte;
+    
+    // Auto-calculate
+    setTimeout(() => calculateWheel(), 100);
+}
+
+// Open position modal
+function openPositionModal() {
+    if (!selectedOptionData) {
+        alert('Please select an option from the table first by clicking on a row.');
+        return;
+    }
+    
+    const data = selectedOptionData;
+    
+    // Fill modal with data
+    document.getElementById('modalTicker').textContent = data.ticker;
+    document.getElementById('modalStockPrice').textContent = '$' + data.stockPrice.toFixed(2);
+    document.getElementById('modalOptionType').value = data.optionType;
+    document.getElementById('modalStrike').value = data.strike.toFixed(2);
+    document.getElementById('modalExpiry').value = data.expiry;
+    document.getElementById('modalDTE').value = data.dte + ' days';
+    document.getElementById('modalPremium').value = data.premium.toFixed(2);
+    document.getElementById('modalContracts').value = '1';
+    
+    // Hidden fields
+    document.getElementById('modalTickerInput').value = data.ticker;
+    document.getElementById('modalStockPriceInput').value = data.stockPrice.toFixed(2);
+    document.getElementById('modalDeltaInput').value = ''; // Will be filled if available
+    
+    // Calculate total premium
+    updateModalTotalPremium();
+    
+    // Show modal
+    document.getElementById('positionModal').classList.remove('hidden');
+}
+
+// Place IBKR order directly from the modal
+async function placeIBKROrderFromModal() {
+    if (!selectedOptionData) {
+        alert('No option selected');
+        return;
+    }
+    
+    const data = selectedOptionData;
+    const premium = parseFloat(document.getElementById('modalPremium').value);
+    const contracts = parseInt(document.getElementById('modalContracts').value) || 1;
+    const optionType = document.getElementById('modalOptionType').value;
+    const right = optionType === 'PUT' ? 'P' : 'C';
+    
+    const confirmMsg = `Place IBKR Order:\n\nSELL ${contracts}x ${data.ticker} $${data.strike} ${optionType} exp ${data.expiry} @ $${premium}/share\n\nTotal premium: $${(premium * contracts * 100).toFixed(2)}\n\nProceed?`;
+    if (!confirm(confirmMsg)) return;
+    
+    const payload = {
+        action: 'SELL',
+        sec_type: 'OPT',
+        ticker: data.ticker,
+        quantity: contracts,
+        order_type: 'LMT',
+        limit_price: premium,
+        strike: data.strike,
+        expiry: data.expiry,
+        right: right,
+        track_position: true,
+    };
+    
+    try {
+        const res = await fetch('{% url "ibkr:place_order_api" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify(payload),
+        });
+        const result = await res.json();
+        if (result.success) {
+            alert(`✅ Order placed! Order #${result.order_id}\nStatus: ${result.status}`);
+            closePositionModal();
+        } else {
+            alert('❌ Order failed: ' + result.error);
+        }
+    } catch (e) {
+        alert('❌ Error: ' + e.message);
+    }
+}
+
+// Close position modal
+function closePositionModal() {
+    document.getElementById('positionModal').classList.add('hidden');
+}
+
+// =============================================
+// QUICK SELL MODAL FUNCTIONS
+// =============================================
+
+function openSellModal(row) {
+    const ticker = '{{ stock.ticker }}';
+    const optionType = row.dataset.type;
+    const strike = parseFloat(row.dataset.strike);
+    const expiry = row.dataset.expiry;
+    const dte = parseInt(row.dataset.dte);
+    const premium = parseFloat(row.dataset.premium);
+    const stockPrice = parseFloat(row.dataset.stockPrice);
+
+    sellModalData = { ticker, optionType, strike, expiry, dte, premium, stockPrice };
+
+    document.getElementById('sellTicker').textContent = ticker;
+    document.getElementById('sellType').textContent = optionType;
+    document.getElementById('sellStrike').textContent = '$' + strike.toFixed(2);
+    document.getElementById('sellExpiry').textContent = expiry;
+    document.getElementById('sellDTE').textContent = dte + ' DTE';
+    document.getElementById('sellLimitPrice').value = premium > 0 ? premium.toFixed(2) : '';
+    document.getElementById('sellContracts').value = '1';
+    document.getElementById('sellResult').classList.add('hidden');
+    document.getElementById('sellSubmitBtn').disabled = false;
+    document.getElementById('sellSubmitBtn').textContent = '🚀 Place SELL Order';
+    updateSellTotal();
+
+    document.getElementById('sellModal').classList.remove('hidden');
+}
+
+function closeSellModal() {
+    document.getElementById('sellModal').classList.add('hidden');
+}
+
+function updateSellTotal() {
+    const price = parseFloat(document.getElementById('sellLimitPrice').value) || 0;
+    const contracts = parseInt(document.getElementById('sellContracts').value) || 1;
+    const total = price * contracts * 100;
+    document.getElementById('sellTotalPremium').textContent = '$' + total.toFixed(2);
+}
+
+async function submitSellOrder() {
+    if (!sellModalData) return;
+
+    const d = sellModalData;
+    const limitPrice = parseFloat(document.getElementById('sellLimitPrice').value);
+    const contracts = parseInt(document.getElementById('sellContracts').value) || 1;
+    const trackPosition = document.getElementById('sellTrackPosition').checked;
+
+    if (!limitPrice || limitPrice <= 0) {
+        alert('Enter a valid limit price');
+        return;
+    }
+
+    const right = d.optionType === 'PUT' ? 'P' : 'C';
+    const total = (limitPrice * contracts * 100).toFixed(2);
+    if (!confirm(`SELL ${contracts}x ${d.ticker} $${d.strike} ${d.optionType} exp ${d.expiry} @ $${limitPrice}/share\n\nTotal premium: $${total}\n\nConfirm?`)) return;
+
+    const btn = document.getElementById('sellSubmitBtn');
+    const resultDiv = document.getElementById('sellResult');
+    btn.disabled = true;
+    btn.textContent = '⏳ Submitting...';
+
+    try {
+        const res = await fetch('{% url "ibkr:place_order_api" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({
+                action: 'SELL',
+                sec_type: 'OPT',
+                ticker: d.ticker,
+                quantity: contracts,
+                order_type: 'LMT',
+                limit_price: limitPrice,
+                strike: d.strike,
+                expiry: d.expiry,
+                right: right,
+                track_position: trackPosition,
+            }),
+        });
+        const data = await res.json();
+        resultDiv.classList.remove('hidden');
+
+        if (data.success) {
+            resultDiv.className = 'bg-green-50 border-2 border-green-400 rounded-lg p-4 text-sm';
+            resultDiv.innerHTML = `<p class="font-bold text-green-900">✅ Order Placed!</p><p class="text-green-800">Order #${data.order_id} | Status: ${data.status}</p>${data.position_tracked ? '<p class="text-green-700">📊 Position tracked</p>' : ''}`;
+        } else {
+            resultDiv.className = 'bg-red-50 border-2 border-red-400 rounded-lg p-4 text-sm';
+            resultDiv.innerHTML = `<p class="font-bold text-red-900">❌ Order Failed</p><p class="text-red-800">${data.error}</p>`;
+        }
+    } catch (e) {
+        resultDiv.classList.remove('hidden');
+        resultDiv.className = 'bg-red-50 border-2 border-red-400 rounded-lg p-4 text-sm';
+        resultDiv.innerHTML = `<p class="font-bold text-red-900">❌ Error</p><p class="text-red-800">${e.message}</p>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🚀 Place SELL Order';
+    }
+}
+
+// Close sell modal on backdrop click
+document.getElementById('sellModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeSellModal();
+});
+
+// Update total premium in modal
+function updateModalTotalPremium() {
+    const premium = parseFloat(document.getElementById('modalPremium').value) || 0;
+    const contracts = parseInt(document.getElementById('modalContracts').value) || 1;
+    const total = premium * contracts * 100;
+    document.getElementById('modalTotalPremium').textContent = '$' + total.toFixed(2);
+}
+
+// Listen for changes in modal inputs
+document.addEventListener('DOMContentLoaded', function() {
+    const premiumInput = document.getElementById('modalPremium');
+    const contractsInput = document.getElementById('modalContracts');
+    
+    if (premiumInput) {
+        premiumInput.addEventListener('input', updateModalTotalPremium);
+    }
+    if (contractsInput) {
+        contractsInput.addEventListener('input', updateModalTotalPremium);
+    }
+    
+    // Close modal when clicking outside
+    document.getElementById('positionModal')?.addEventListener('click', function(e) {
+        if (e.target === this) {
+            closePositionModal();
+        }
+    });
+});
+
+function calculateWheel() {
+    const stockPrice = parseFloat(document.getElementById('calcStockPrice').value);
+    const strike = parseFloat(document.getElementById('calcStrike').value);
+    const premium = parseFloat(document.getElementById('calcPremium').value);
+    const dte = parseInt(document.getElementById('calcDTE').value);
+    const contracts = parseInt(document.getElementById('calcContracts').value);
+    
+    // Calculations
+    const totalPremium = premium * 100 * contracts;  // Premium per contract (100 shares)
+    const expectedPremium = totalPremium; // What you'll receive when selling
+    const breakeven = strike - premium;
+    const capitalRequired = strike * 100 * contracts;
+    const returnOnRisk = (premium / strike) * 100;
+    const apy = (premium / strike) * (365 / dte) * 100;
+    
+    // Update results
+    document.getElementById('resultExpectedPremium').textContent = '$' + expectedPremium.toFixed(2);
+    document.getElementById('resultPremium').textContent = '$' + totalPremium.toFixed(2);
+    document.getElementById('resultBreakeven').textContent = '$' + breakeven.toFixed(2);
+    document.getElementById('resultROR').textContent = returnOnRisk.toFixed(2) + '%';
+    document.getElementById('resultAPY').textContent = apy.toFixed(2) + '%';
+    document.getElementById('resultCapital').textContent = '$' + capitalRequired.toLocaleString();
+    
+    // Outcome analysis
+    let outcome = '';
+    if (breakeven < stockPrice) {
+        const discount = ((stockPrice - breakeven) / stockPrice * 100).toFixed(1);
+        outcome = `✓ If assigned: You buy ${contracts * 100} shares at $${breakeven.toFixed(2)} (${discount}% below current price of $${stockPrice.toFixed(2)}). `;
+    } else {
+        outcome = `⚠️ Break-even ($${breakeven.toFixed(2)}) is above current price ($${stockPrice.toFixed(2)}). `;
+    }
+    
+    if (premium > 0) {
+        outcome += `You collect $${expectedPremium.toFixed(2)} premium upfront. `;
+    }
+    
+    if (apy >= 20) {
+        outcome += `🎯 Excellent ${apy.toFixed(0)}% APY!`;
+    } else if (apy >= 15) {
+        outcome += `✓ Good ${apy.toFixed(0)}% APY.`;
+    } else {
+        outcome += `Consider higher premium options for better returns.`;
+    }
+    
+    document.getElementById('resultOutcome').textContent = outcome;
+}
+
+// Listen for contract number changes to update expected premium
+document.addEventListener('DOMContentLoaded', function() {
+    const contractInput = document.getElementById('calcContracts');
+    if (contractInput) {
+        contractInput.addEventListener('input', calculateWheel);
+    }
+});
+
+// Save filter state to localStorage
+function saveFilterState() {
+    const state = {
+        expiry: document.getElementById('expiryFilter').value,
+        quality: document.getElementById('qualityFilter').value,
+        type: document.getElementById('typeFilter').value,
+        autoRefresh: document.getElementById('autoRefresh').checked
+    };
+    localStorage.setItem('optionsFilterState', JSON.stringify(state));
+}
+
+// Restore filter state from localStorage
+function restoreFilterState() {
+    const savedState = localStorage.getItem('optionsFilterState');
+    if (savedState) {
+        try {
+            const state = JSON.parse(savedState);
+            document.getElementById('expiryFilter').value = state.expiry || 'all';
+            document.getElementById('qualityFilter').value = state.quality || 'all';
+            document.getElementById('typeFilter').value = state.type || 'all';
+            
+            applyFilters();
+        } catch (e) {
+            console.error('Error restoring filter state:', e);
+        }
+    }
+}
+
+// Filter options by expiration, quality, and type
+function applyFilters() {
+    const expiryFilter = document.getElementById('expiryFilter').value;
+    const qualityFilter = document.getElementById('qualityFilter').value;
+    const typeFilter = document.getElementById('typeFilter').value;
+    const rows = document.querySelectorAll('.option-row');
+    let visibleCount = 0;
+    
+    rows.forEach(row => {
+        let showRow = true;
+        
+        // Filter by expiration
+        if (expiryFilter !== 'all') {
+            const dte = parseInt(row.dataset.dte);
+            const days = parseInt(expiryFilter.replace('d', ''));
+            if (dte > days) {
+                showRow = false;
+            }
+        }
+        
+        // Filter by quality
+        if (qualityFilter !== 'all') {
+            const quality = row.dataset.quality;
+            if (qualityFilter === 'excellent' && quality !== 'excellent') {
+                showRow = false;
+            } else if (qualityFilter === 'good' && quality !== 'excellent' && quality !== 'good') {
+                showRow = false;
+            } else if (qualityFilter === 'fair' && quality === 'poor') {
+                showRow = false;
+            }
+        }
+        
+        // Filter by type
+        if (typeFilter !== 'all') {
+            const type = row.dataset.type;
+            if (type !== typeFilter) {
+                showRow = false;
+            }
+        }
+        
+        // Show/hide row
+        if (showRow) {
+            row.style.display = '';
+            visibleCount++;
+        } else {
+            row.style.display = 'none';
+        }
+    });
+    
+    // Update counter
+    document.getElementById('filteredCount').textContent = visibleCount;
+    
+    // Save state
+    saveFilterState();
+}
+
+// Reset all filters
+function resetFilters() {
+    document.getElementById('expiryFilter').value = 'all';
+    document.getElementById('qualityFilter').value = 'all';
+    document.getElementById('typeFilter').value = 'all';
+    localStorage.removeItem('optionsFilterState');
+    applyFilters();
+}
+
+// Apply filters on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Restore saved filters
+    restoreFilterState();
+});
+
+// Initialize auto-refresh for options page
+const optionsAutoRefresh = new AutoRefresh(() => {
+    window.location.reload();
+}, {
+    interval: 60000, // 1 minute
+    enabledByDefault: false,
+    storageKey: 'global_autoRefresh'
+});
+
+createAutoRefreshToggle(optionsAutoRefresh, 'autoRefreshContainer', {
+    label: 'Auto-Refresh',
+    icon: '🔄'
+});
+</script>
+
+{% endblock %}

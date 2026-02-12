@@ -1,0 +1,304 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}IB Gateway Control - Wheel Strategy{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">IB Gateway Control</h1>
+            <p class="text-gray-600 mt-1">Manage your Interactive Brokers Gateway connection</p>
+        </div>
+        <a href="{% url 'ibkr:dashboard' %}" class="text-blue-600 hover:text-blue-700">
+            ← Back to Dashboard
+        </a>
+    </div>
+
+    <!-- Connection Status Card -->
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold text-gray-900">Connection Status</h2>
+            <button onclick="refreshStatus()" class="text-sm text-blue-600 hover:text-blue-700 flex items-center">
+                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh
+            </button>
+        </div>
+
+        <div id="status-container" class="space-y-4">
+            <div class="flex items-center space-x-3">
+                <div id="status-indicator" class="w-4 h-4 rounded-full {% if is_connected %}bg-green-500{% else %}bg-red-500{% endif %} animate-pulse"></div>
+                <span id="status-text" class="text-lg font-medium {% if is_connected %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if is_connected %}Connected{% else %}Disconnected{% endif %}
+                </span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t">
+                <div>
+                    <p class="text-sm text-gray-600">Host</p>
+                    <p class="text-lg font-semibold" id="gateway-host">{{ gateway_host }}</p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-600">Port</p>
+                    <p class="text-lg font-semibold" id="gateway-port">{{ gateway_port }}</p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-600">Client ID</p>
+                    <p class="text-lg font-semibold" id="client-id">{{ client_id }}</p>
+                </div>
+            </div>
+
+            <div id="accounts-container" class="hidden pt-4 border-t">
+                <p class="text-sm text-gray-600 mb-2">Connected Accounts</p>
+                <div id="accounts-list" class="flex flex-wrap gap-2"></div>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex space-x-3 mt-6">
+            <button 
+                id="connect-btn" 
+                onclick="connectGateway()" 
+                class="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200 {% if is_connected %}opacity-50 cursor-not-allowed{% endif %}"
+                {% if is_connected %}disabled{% endif %}>
+                <span class="flex items-center justify-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Connect
+                </span>
+            </button>
+            <button 
+                id="disconnect-btn" 
+                onclick="disconnectGateway()" 
+                class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200 {% if not is_connected %}opacity-50 cursor-not-allowed{% endif %}"
+                {% if not is_connected %}disabled{% endif %}>
+                <span class="flex items-center justify-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                    Disconnect
+                </span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Gateway Information -->
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4">Gateway Information</h2>
+        <div class="space-y-3 text-sm">
+            <div class="flex items-start">
+                <svg class="w-5 h-5 text-blue-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                    <p class="font-medium text-gray-900">Docker Container</p>
+                    <p class="text-gray-600">IB Gateway runs in a Docker container for easy deployment</p>
+                </div>
+            </div>
+            <div class="flex items-start">
+                <svg class="w-5 h-5 text-blue-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                <div>
+                    <p class="font-medium text-gray-900">VNC Access</p>
+                    <p class="text-gray-600">Connect to port 5900 with a VNC client to view the Gateway UI</p>
+                </div>
+            </div>
+            <div class="flex items-start">
+                <svg class="w-5 h-5 text-blue-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                <div>
+                    <p class="font-medium text-gray-900">Secure Connection</p>
+                    <p class="text-gray-600">API connections are isolated within the Docker network</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Start Guide -->
+    <div class="bg-blue-50 rounded-lg p-6">
+        <h3 class="text-lg font-semibold text-blue-900 mb-3">🚀 Quick Start</h3>
+        <ol class="space-y-2 text-sm text-blue-800">
+            <li class="flex items-start">
+                <span class="font-bold mr-2">1.</span>
+                <span>Ensure Docker is running and <code class="bg-blue-100 px-2 py-0.5 rounded">docker-compose up -d</code> has been executed</span>
+            </li>
+            <li class="flex items-start">
+                <span class="font-bold mr-2">2.</span>
+                <span>Configure your IBKR credentials in the <code class="bg-blue-100 px-2 py-0.5 rounded">.env</code> file</span>
+            </li>
+            <li class="flex items-start">
+                <span class="font-bold mr-2">3.</span>
+                <span>Click "Connect" button above to establish connection to IB Gateway</span>
+            </li>
+            <li class="flex items-start">
+                <span class="font-bold mr-2">4.</span>
+                <span>Optionally, use a VNC client to connect to <code class="bg-blue-100 px-2 py-0.5 rounded">localhost:5900</code> to view Gateway UI</span>
+            </li>
+        </ol>
+    </div>
+</div>
+
+<script>
+    // Auto-refresh status every 10 seconds
+    let autoRefreshInterval;
+
+    function startAutoRefresh() {
+        autoRefreshInterval = setInterval(refreshStatus, 10000);
+    }
+
+    function stopAutoRefresh() {
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+        }
+    }
+
+    async function refreshStatus() {
+        try {
+            const response = await fetch("{% url 'ibkr:gateway_status_api' %}");
+            const data = await response.json();
+            
+            updateStatusUI(data);
+        } catch (error) {
+            console.error('Error fetching status:', error);
+        }
+    }
+
+    function updateStatusUI(data) {
+        const indicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const accountsContainer = document.getElementById('accounts-container');
+        const accountsList = document.getElementById('accounts-list');
+
+        if (data.connected) {
+            indicator.className = 'w-4 h-4 rounded-full bg-green-500 animate-pulse';
+            statusText.textContent = 'Connected';
+            statusText.className = 'text-lg font-medium text-green-600';
+            connectBtn.disabled = true;
+            connectBtn.className = 'flex-1 bg-green-600 text-white font-semibold py-3 px-6 rounded-lg opacity-50 cursor-not-allowed';
+            disconnectBtn.disabled = false;
+            disconnectBtn.className = 'flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200';
+
+            // Show accounts if available
+            if (data.accounts && data.accounts.length > 0) {
+                accountsContainer.classList.remove('hidden');
+                accountsList.innerHTML = data.accounts.map(acc => 
+                    `<span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">${acc}</span>`
+                ).join('');
+            }
+        } else {
+            indicator.className = 'w-4 h-4 rounded-full bg-red-500 animate-pulse';
+            statusText.textContent = 'Disconnected';
+            statusText.className = 'text-lg font-medium text-red-600';
+            connectBtn.disabled = false;
+            connectBtn.className = 'flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200';
+            disconnectBtn.disabled = true;
+            disconnectBtn.className = 'flex-1 bg-red-600 text-white font-semibold py-3 px-6 rounded-lg opacity-50 cursor-not-allowed';
+            accountsContainer.classList.add('hidden');
+        }
+    }
+
+    async function connectGateway() {
+        const connectBtn = document.getElementById('connect-btn');
+        const originalText = connectBtn.innerHTML;
+        
+        connectBtn.innerHTML = '<span class="flex items-center justify-center"><svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Connecting...</span>';
+        connectBtn.disabled = true;
+
+        try {
+            const response = await fetch("{% url 'ibkr:gateway_connect_api' %}", {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                }
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                showMessage('success', data.message);
+                // Wait a bit for connection to establish
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                await refreshStatus();
+                // Restore button text after refresh
+                connectBtn.innerHTML = originalText;
+            } else {
+                showMessage('error', data.message || 'Failed to connect');
+                connectBtn.innerHTML = originalText;
+                connectBtn.disabled = false;
+            }
+        } catch (error) {
+            showMessage('error', 'Connection error: ' + error.message);
+            connectBtn.innerHTML = originalText;
+            connectBtn.disabled = false;
+        }
+    }
+
+    async function disconnectGateway() {
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const originalText = disconnectBtn.innerHTML;
+        
+        disconnectBtn.innerHTML = '<span class="flex items-center justify-center"><svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Disconnecting...</span>';
+        disconnectBtn.disabled = true;
+
+        try {
+            const response = await fetch("{% url 'ibkr:gateway_disconnect_api' %}", {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                }
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                showMessage('success', data.message);
+                await refreshStatus();
+            } else {
+                showMessage('error', 'Failed to disconnect');
+                disconnectBtn.innerHTML = originalText;
+                disconnectBtn.disabled = false;
+            }
+        } catch (error) {
+            showMessage('error', 'Disconnection error: ' + error.message);
+            disconnectBtn.innerHTML = originalText;
+            disconnectBtn.disabled = false;
+        }
+    }
+
+    function showMessage(type, message) {
+        // Create a simple toast notification
+        const toast = document.createElement('div');
+        toast.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg text-white z-50 ${
+            type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        }`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.remove();
+        }, 4000);
+    }
+
+    // Start auto-refresh when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        startAutoRefresh();
+    });
+
+    // Stop auto-refresh when page is hidden
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            stopAutoRefresh();
+        } else {
+            startAutoRefresh();
+        }
+    });
+</script>
+{% endblock %}

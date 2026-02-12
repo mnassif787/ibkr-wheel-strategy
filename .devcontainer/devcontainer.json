@@ -1,0 +1,31 @@
+{
+  "name": "IBKR Wheel Strategy Platform",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "pip install -r requirements.txt && python manage.py migrate",
+  "forwardPorts": [8000, 7496, 5900],
+  "portsAttributes": {
+    "8000": {
+      "label": "Django Web",
+      "onAutoForward": "notify"
+    },
+    "7496": {
+      "label": "IB Gateway",
+      "onAutoForward": "silent"
+    },
+    "5900": {
+      "label": "VNC",
+      "onAutoForward": "silent"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
+}
