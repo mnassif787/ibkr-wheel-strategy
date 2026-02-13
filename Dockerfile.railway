@@ -52,17 +52,18 @@ RUN wget -q https://download2.interactivebrokers.com/installers/ibgateway/latest
     RAW_VERSION=$(ls /opt/ibgateway/*.desktop 2>/dev/null | grep -oP 'Gateway \K[\d.]+' | head -1) && \
     INSTALLED_VERSION=$(echo "$RAW_VERSION" | sed 's/\.$//' | sed 's/\.$//') && \
     echo "Detected IB Gateway version: $INSTALLED_VERSION (raw: $RAW_VERSION)" && \
-    # Create version-specific directory structure that IBC expects (remove dots from version)
-    VERSION_SHORT=$(echo $INSTALLED_VERSION | tr -d '.') && \
-    mkdir -p /opt/ibgateway/$VERSION_SHORT && \
+    # Create version-specific directory WITH dots (IBC expects /opt/ibgateway/10.43/jars/)
+    mkdir -p "/opt/ibgateway/$INSTALLED_VERSION" && \
     # Move contents to version-specific folder
-    mv /opt/ibgateway/jars /opt/ibgateway/$VERSION_SHORT/ && \
-    mv /opt/ibgateway/data /opt/ibgateway/$VERSION_SHORT/ 2>/dev/null || true && \
-    mv /opt/ibgateway/*.vmoptions /opt/ibgateway/$VERSION_SHORT/ 2>/dev/null || true && \
+    mv /opt/ibgateway/jars "/opt/ibgateway/$INSTALLED_VERSION/" && \
+    mv /opt/ibgateway/data "/opt/ibgateway/$INSTALLED_VERSION/" 2>/dev/null || true && \
+    mv /opt/ibgateway/*.vmoptions "/opt/ibgateway/$INSTALLED_VERSION/" 2>/dev/null || true && \
     # Create marker file with cleaned version
     echo $INSTALLED_VERSION > /opt/ibgateway/VERSION.txt && \
-    echo "Created structure: /opt/ibgateway/$VERSION_SHORT/jars" && \
-    ls -la /opt/ibgateway/$VERSION_SHORT/
+    echo "Created structure: /opt/ibgateway/$INSTALLED_VERSION/jars" && \
+    ls -la "/opt/ibgateway/$INSTALLED_VERSION/" && \
+    echo "Verifying jars folder exists:" && \
+    ls -la "/opt/ibgateway/$INSTALLED_VERSION/jars/" | head -20
 
 # Install Python packages
 COPY requirements.txt .
