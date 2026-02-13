@@ -47,7 +47,20 @@ RUN wget -q https://github.com/IbcAlpha/IBC/releases/download/3.17.0/IBCLinux-3.
 RUN wget -q https://download2.interactivebrokers.com/installers/ibgateway/latest-standalone/ibgateway-latest-standalone-linux-x64.sh && \
     chmod +x ibgateway-latest-standalone-linux-x64.sh && \
     ./ibgateway-latest-standalone-linux-x64.sh -q -dir /opt/ibgateway && \
-    rm ibgateway-latest-standalone-linux-x64.sh
+    rm ibgateway-latest-standalone-linux-x64.sh && \
+    # Detect installed version from desktop file
+    INSTALLED_VERSION=$(ls /opt/ibgateway/*.desktop 2>/dev/null | grep -oP 'Gateway \K[\d.]+' | head -1) && \
+    echo "Detected IB Gateway version: $INSTALLED_VERSION" && \
+    # Create version-specific directory structure that IBC expects (remove dots from version)
+    VERSION_SHORT=$(echo $INSTALLED_VERSION | tr -d '.') && \
+    mkdir -p /opt/ibgateway/$VERSION_SHORT && \
+    # Move contents to version-specific folder
+    mv /opt/ibgateway/jars /opt/ibgateway/$VERSION_SHORT/ && \
+    mv /opt/ibgateway/data /opt/ibgateway/$VERSION_SHORT/ 2>/dev/null || true && \
+    mv /opt/ibgateway/*.vmoptions /opt/ibgateway/$VERSION_SHORT/ 2>/dev/null || true && \
+    # Create marker file with version
+    echo $INSTALLED_VERSION > /opt/ibgateway/VERSION.txt && \
+    echo "Created structure: /opt/ibgateway/$VERSION_SHORT/jars"
 
 # Install Python packages
 COPY requirements.txt .

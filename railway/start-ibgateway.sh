@@ -1,49 +1,30 @@
 #!/bin/bash
-# Debug: Check IB Gateway installation
-echo "=== Debugging IB Gateway Installation ==="
-echo "Contents of /opt/ibgateway:"
-ls -la /opt/ibgateway/
-echo ""
-echo "Looking for version folders:"
-ls -d /opt/ibgateway/*/ 2>/dev/null || echo "No subdirectories found"
-echo ""
-
-# Find the actual installed version
-if [ -d "/opt/ibgateway" ]; then
-    # Look for Jts directory or version-specific folders
-    VERSION_DIR=$(find /opt/ibgateway -type d -name "jars" | head -1)
-    if [ -n "$VERSION_DIR" ]; then
-        GATEWAY_PATH=$(dirname "$VERSION_DIR")
-        echo "Found Gateway at: $GATEWAY_PATH"
-        
-        # Try to detect version from directory name
-        VERSION=$(basename "$GATEWAY_PATH" | grep -oP '\d+\.\d+' | head -1)
-        if [ -z "$VERSION" ]; then
-            # Try looking in current directory
-            VERSION=$(find "$GATEWAY_PATH" -name "*.jar" -exec basename {} \; | grep -oP '\d+\.\d+' | head -1)
-        fi
-        
-        if [ -z "$VERSION" ]; then
-            VERSION="10.19"  # fallback
-        fi
-        
-        echo "Using version: $VERSION"
-        echo "Using path: $GATEWAY_PATH"
-        
-        # Run IBC
-        exec /opt/ibc/scripts/ibcstart.sh \
-            "$VERSION" \
-            --gateway \
-            --tws-path="$GATEWAY_PATH" \
-            --ibc-path=/opt/ibc \
-            --ibc-ini=/opt/ibc/config.ini \
-            --mode=paper
-    else
-        echo "ERROR: Could not find jars folder in /opt/ibgateway"
-        ls -laR /opt/ibgateway/ | head -100
+# Read the installed version
+if [ -f "/opt/ibgateway/VERSION.txt" ]; then
+    INSTALLED_VERSION=$(cat /opt/ibgateway/VERSION.txt)
+    VERSION_SHORT=$(echo $INSTALLED_VERSION | tr -d '.')
+    echo "=== Starting IB Gateway Version $INSTALLED_VERSION ==="
+    echo "Using path: /opt/ibgateway/$VERSION_SHORT"
+    
+    # Verify jars folder exists
+    if [ ! -d "/opt/ibgateway/$VERSION_SHORT/jars" ]; then
+        echo "ERROR: jars folder not found at /opt/ibgateway/$VERSION_SHORT/jars"
+        echo "Contents of /opt/ibgateway:"
+        ls -laR /opt/ibgateway/
         exit 1
     fi
+    
+    # Run IBC with detected version
+    exec /opt/ibc/scripts/ibcstart.sh \
+        "$INSTALLED_VERSION" \
+        --gateway \
+        --tws-path=/opt/ibgateway \
+        --ibc-path=/opt/ibc \
+        --ibc-ini=/opt/ibc/config.ini \
+        --mode=paper
 else
-    echo "ERROR: /opt/ibgateway does not exist"
+    echo "ERROR: VERSION.txt not found"
+    echo "Contents of /opt/ibgateway:"
+    ls -la /opt/ibgateway/
     exit 1
 fi
