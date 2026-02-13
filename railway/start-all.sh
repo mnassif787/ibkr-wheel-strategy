@@ -25,8 +25,29 @@ fi
 echo "================================================"
 echo "Starting all services with Supervisor..."
 echo "Django: http://0.0.0.0:$PORT"
-echo "VNC Access: http://0.0.0.0:$PORT/vnc/"
 echo "================================================"
+
+# Debug: Check if IBC is installed
+echo "Checking IB Gateway installation..."
+if [ -d "/opt/ibgateway" ]; then
+    echo "✓ IB Gateway directory exists"
+    ls -la /opt/ibgateway/ | head -10
+else
+    echo "✗ IB Gateway directory NOT found"
+fi
+
+if [ -d "/opt/ibc" ]; then
+    echo "✓ IBC directory exists"
+    ls -la /opt/ibc/
+else
+    echo "✗ IBC directory NOT found"
+fi
+
+if [ -f "/opt/ibc/scripts/ibcstart.sh" ]; then
+    echo "✓ IBC start script exists"
+else
+    echo "✗ IBC start script NOT found"
+fi
 
 # Start supervisord (manages all services)
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
