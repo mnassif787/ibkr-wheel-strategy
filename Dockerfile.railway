@@ -73,11 +73,14 @@ RUN pip3 install --no-cache-dir -r requirements.txt gunicorn
 COPY . .
 
 # Create necessary directories
-RUN mkdir -p /app/staticfiles /app/media /app/data /app/logs /var/log/supervisor
+RUN mkdir -p /app/staticfiles /app/media /app/data /var/log/supervisor && \
+    # Remove default nginx site and ensure our config is active
+    rm -f /etc/nginx/sites-enabled/default
 
 # Copy configuration files
 COPY railway/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY railway/nginx.conf /etc/nginx/sites-available/default
+RUN ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 COPY railway/ibc-config.ini /opt/ibc/config.ini
 COPY railway/start-ibgateway.sh /opt/ibc/start-ibgateway.sh
 COPY railway/start-all.sh /start-all.sh
