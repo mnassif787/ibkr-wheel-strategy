@@ -52,21 +52,31 @@ RUN wget -q https://download2.interactivebrokers.com/installers/ibgateway/latest
     RAW_VERSION=$(ls /opt/ibgateway/*.desktop 2>/dev/null | grep -oP 'Gateway \K[\d.]+' | head -1) && \
     INSTALLED_VERSION=$(echo "$RAW_VERSION" | sed 's/\.$//' | sed 's/\.$//') && \
     echo "Detected IB Gateway version: $INSTALLED_VERSION (raw: $RAW_VERSION)" && \
+    echo "Files before restructuring:" && \
+    ls -la /opt/ibgateway/ && \
     # Create version-specific directory WITH dots (IBC expects /opt/ibgateway/10.43/jars/)
     mkdir -p "/opt/ibgateway/$INSTALLED_VERSION" && \
     # Move jars folder to version-specific folder (required by IBC)
     mv /opt/ibgateway/jars "/opt/ibgateway/$INSTALLED_VERSION/" && \
-    # Copy (not move) data and vmoptions - IBC needs vmoptions in root AND version folder
-    cp -r /opt/ibgateway/data "/opt/ibgateway/$INSTALLED_VERSION/" 2>/dev/null || true && \
-    cp /opt/ibgateway/*.vmoptions "/opt/ibgateway/$INSTALLED_VERSION/" 2>/dev/null || true && \
+    # Copy data folder to version-specific folder
+    if [ -d "/opt/ibgateway/data" ]; then \
+        cp -r /opt/ibgateway/data "/opt/ibgateway/$INSTALLED_VERSION/"; \
+    fi && \
+    # Copy vmoptions to version folder BUT KEEP ORIGINAL in root (IBC needs both)
+    if ls /opt/ibgateway/*.vmoptions 1> /dev/null 2>&1; then \
+        cp /opt/ibgateway/*.vmoptions "/opt/ibgateway/$INSTALLED_VERSION/"; \
+        echo "Copied vmoptions to version directory"; \
+    fi && \
     # Create marker file with cleaned version
     echo $INSTALLED_VERSION > /opt/ibgateway/VERSION.txt && \
     echo "Created structure: /opt/ibgateway/$INSTALLED_VERSION/jars" && \
     ls -la "/opt/ibgateway/$INSTALLED_VERSION/" && \
     echo "Verifying jars folder exists:" && \
     ls -la "/opt/ibgateway/$INSTALLED_VERSION/jars/" | head -20 && \
-    echo "Verifying vmoptions in root:" && \
-    ls -la /opt/ibgateway/*.vmoptions
+    echo "Verifying vmoptions files in root (CRITICAL for IBC):" && \
+    ls -la /opt/ibgateway/*.vmoptions || echo "ERROR: No vmoptions in root!" && \
+    echo "Verifying vmoptions files in version directory:" && \
+    ls -la "/opt/ibgateway/$INSTALLED_VERSION/"*.vmoptions || echo "No vmoptions in version dir"
 
 # Install Python packages
 COPY requirements.txt .

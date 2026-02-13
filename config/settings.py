@@ -121,7 +121,7 @@ SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 # IBKR Configuration
 IBKR_HOST = config('IBKR_HOST', default='127.0.0.1')
-IBKR_PORT = config('IBKR_PORT', default=7497, cast=int)
+IBKR_PORT = config('IBKR_PORT', default=4001, cast=int)  # 4001 for IB Gateway, 7497 for TWS
 IBKR_CLIENT_ID = config('IBKR_CLIENT_ID', default=1, cast=int)
 IBKR_PAPER_TRADING = config('IBKR_PAPER_TRADING', default=True, cast=bool)
 
