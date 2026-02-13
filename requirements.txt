@@ -13,7 +13,6 @@ numpy>=1.24.0
 
 # Email Service
 resend==0.8.0
-django-resend-email==0.3.0
 
 # Tailwind CSS Integration
 django-tailwind==3.8.0
