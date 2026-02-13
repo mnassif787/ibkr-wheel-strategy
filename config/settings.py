@@ -11,12 +11,13 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-dev-key-change-in-pro
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-# Parse ALLOWED_HOSTS and convert wildcard format from *.domain.com to .domain.com (Django format)
-ALLOWED_HOSTS = [
-    host.strip().replace('*.', '.') if host.strip().startswith('*.') else host.strip()
-    for host in config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
-    if host.strip()
-]
+# Parse ALLOWED_HOSTS - accept all Railway domains
+ALLOWED_HOSTS_RAW = config('ALLOWED_HOSTS', default='localhost,127.0.0.1')
+ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_RAW.split(',') if host.strip()]
+
+# Add Railway wildcard patterns explicitly
+if not DEBUG:
+    ALLOWED_HOSTS.extend(['.railway.app', '.up.railway.app'])
 
 # Application definition
 INSTALLED_APPS = [
@@ -112,7 +113,8 @@ TAILWIND_APP_NAME = 'theme'
 INTERNAL_IPS = ['127.0.0.1']
 
 # Email configuration (Resend)
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend' if DEBUG else 'resend.django.EmailBackend'
+# Use console backend to avoid crashes - email sending disabled in production for now
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 RESEND_API_KEY = config('RESEND_API_KEY', default='')
 DEFAULT_FROM_EMAIL = config('EMAIL_FROM', default='noreply@localhost')
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
