@@ -11,7 +11,12 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-dev-key-change-in-pro
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+# Parse ALLOWED_HOSTS and convert wildcard format from *.domain.com to .domain.com (Django format)
+ALLOWED_HOSTS = [
+    host.strip().replace('*.', '.') if host.strip().startswith('*.') else host.strip()
+    for host in config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+    if host.strip()
+]
 
 # Application definition
 INSTALLED_APPS = [
