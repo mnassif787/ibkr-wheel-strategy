@@ -29,6 +29,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     # Nginx for proxying
     nginx \
+    # For environment variable substitution
+    gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
 # Install noVNC for web-based VNC access
@@ -62,9 +64,10 @@ RUN mkdir -p /app/staticfiles /app/media /app/data /app/logs /var/log/supervisor
 # Copy configuration files
 COPY railway/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY railway/nginx.conf /etc/nginx/sites-available/default
-COPY railway/ibc-config.ini /opt/ibc/config.ini
+COPY railway/ibc-config.ini /opt/ibc/config.ini.template
+COPY railway/start-ibgateway.sh /opt/ibc/start-ibgateway.sh
 COPY railway/start-all.sh /start-all.sh
-RUN chmod +x /start-all.sh
+RUN chmod +x /start-all.sh /opt/ibc/start-ibgateway.sh
 
 # Collect static files
 RUN python3 manage.py collectstatic --noinput || true
