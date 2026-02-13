@@ -1,0 +1,78 @@
+# Railway Deployment - Copy These Values
+
+## Environment Variables to Add in Railway
+
+Copy each line below (without the variable name) when Railway asks for values:
+
+### 1. SECRET_KEY
+```
+django-insecure-super-long-secret-key-change-this-9x8y7w6v5u4t3s2r1q0p123456789
+```
+
+### 2. DEBUG
+```
+False
+```
+
+### 3. ALLOWED_HOSTS
+```
+*.railway.app,*.up.railway.app
+```
+
+### 4. CSRF_TRUSTED_ORIGINS
+```
+https://*.railway.app,https://*.up.railway.app
+```
+
+### 5. BASIC_AUTH_USER
+```
+admin
+```
+
+### 6. BASIC_AUTH_PASS
+```
+wheel2026
+```
+
+### 7. TELEGRAM_BOT_TOKEN
+```
+8359531192:AAHPW4Kw4lmtwVZHsKClYtUPlB7KEgTTOBI
+```
+
+### 8. TELEGRAM_CHAT_ID
+```
+352793143
+```
+
+### 9. IBKR_HOST
+```
+127.0.0.1
+```
+
+### 10. IBKR_PORT
+```
+7497
+```
+
+---
+
+## Your GitHub Repository
+```
+https://github.com/mnassif787/ibkr-wheel-strategy
+```
+
+## Quick Paste (All Variables at Once)
+If Railway allows bulk import, use this:
+
+```env
+SECRET_KEY=django-insecure-super-long-secret-key-change-this-9x8y7w6v5u4t3s2r1q0p123456789
+DEBUG=False
+ALLOWED_HOSTS=*.railway.app,*.up.railway.app
+CSRF_TRUSTED_ORIGINS=https://*.railway.app,https://*.up.railway.app
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASS=wheel2026
+TELEGRAM_BOT_TOKEN=8359531192:AAHPW4Kw4lmtwVZHsKClYtUPlB7KEgTTOBI
+TELEGRAM_CHAT_ID=352793143
+IBKR_HOST=127.0.0.1
+IBKR_PORT=7497
+```

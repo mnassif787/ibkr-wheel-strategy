@@ -22,6 +22,10 @@ RUN pip install --no-cache-dir -r requirements.txt gunicorn
 # Copy project files
 COPY . .
 
+# Copy and set permissions for entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Create directories with proper permissions
 RUN mkdir -p staticfiles media data
 
@@ -39,9 +43,7 @@ EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/ || exit 1
+    CMD curl -f http://localhost:${PORT:-8000}/ || exit 1
 
-# Run migrations and start gunicorn (Railway-compatible)
-CMD python manage.py migrate && \
-    python manage.py collectstatic --noinput && \
-    gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 2 --timeout 300 --access-logfile - --error-logfile - config.wsgi:application
+# Use entrypoint script
+CMD ["/entrypoint.sh"]
