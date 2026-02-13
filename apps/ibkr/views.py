@@ -2088,3 +2088,9 @@ def orders_page(request):
         'all_stocks': all_stocks,
     })
 
+
+def vnc_viewer(request):
+    """View to access IB Gateway VNC interface via iframe"""
+    return render(request, 'ibkr/vnc.html', {
+        'page_title': 'IB Gateway VNC',
+    })

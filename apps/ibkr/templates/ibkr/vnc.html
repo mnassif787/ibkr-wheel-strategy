@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}IB Gateway VNC - Wheel Strategy{% endblock %}
+
+{% block content %}
+<div class="max-w-full mx-auto">
+    <div class="flex justify-between items-center mb-6 px-4">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">IB Gateway VNC Access</h1>
+            <p class="text-gray-600 mt-1">Remote desktop access to Interactive Brokers Gateway</p>
+        </div>
+        <a href="{% url 'ibkr:hub' %}" class="text-blue-600 hover:text-blue-700">
+            ← Back to Dashboard
+        </a>
+    </div>
+
+    <!-- Instructions Card -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4 mx-4">
+        <div class="flex items-start">
+            <svg class="w-6 h-6 text-blue-600 mr-3 mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+                <h3 class="font-semibold text-blue-900 mb-1">How to use:</h3>
+                <ul class="text-sm text-blue-800 space-y-1">
+                    <li>• Click "Connect" button in the VNC viewer below</li>
+                    <li>• Wait for IB Gateway to load (may take 1-2 minutes on first start)</li>
+                    <li>• Log in with your IBKR credentials if prompted</li>
+                    <li>• Complete 2FA if your account requires it</li>
+                    <li>•  Once logged in, the Django app will automatically connect to the API</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- VNC Viewer iframe -->
+    <div class="bg-white rounded-lg shadow-md overflow-hidden mx-4" style="height: calc(100vh - 250px);">
+        <iframe 
+            src="/vnc/" 
+            class="w-full h-full border-0"
+            allow="clipboard-read; clipboard-write"
+            title="IB Gateway VNC Viewer">
+        </iframe>
+    </div>
+
+    <!-- Tips Card -->
+    <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 mt-4 mx-4">
+        <h3 class="font-semibold text-gray-900 mb-2">💡 Tips:</h3>
+        <ul class="text-sm text-gray-700 space-y-1">
+            <li>• If the screen is blank, IB Gateway might still be starting up. Wait 1-2 minutes.</li>
+            <li>• You can use your mouse and keyboard to interact with the Gateway interface.</li>
+            <li>• To paste text, use the clipboard icon in the VNC toolbar.</li>
+            <li>• After logging in, check the main dashboard to verify the API connection is active.</li>
+        </ul>
+    </div>
+</div>
+
+<style>
+    /* Make the page use full width */
+    .max-w-full {
+        max-width: 100%;
+    }
+</style>
+{% endblock %}

@@ -51,4 +51,7 @@ urlpatterns = [
     path('api/orders/cancel/', views.cancel_order_api, name='cancel_order_api'),
     path('api/orders/open/', views.open_orders_api, name='open_orders_api'),
     path('api/orders/quote/', views.option_quote_api, name='option_quote_api'),
+    
+    # VNC Viewer for IB Gateway
+    path('vnc/', views.vnc_viewer, name='vnc_viewer'),
 ]

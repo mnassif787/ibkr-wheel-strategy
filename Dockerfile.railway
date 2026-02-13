@@ -1,0 +1,79 @@
+# Multi-service container for Railway: Django + IB Gateway
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Python and build tools
+    python3.11 \
+    python3-pip \
+    python3.11-venv \
+    build-essential \
+    curl \
+    # IB Gateway dependencies
+    openjdk-17-jre-headless \
+    xvfb \
+    x11vnc \
+    socat \
+    supervisor \
+    procps \
+    net-tools \
+    # VNC web client
+    wget \
+    unzip \
+    # Nginx for proxying
+    nginx \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install noVNC for web-based VNC access
+RUN mkdir -p /opt/noVNC/utils/websockify && \
+    wget -qO- https://github.com/novnc/noVNC/archive/v1.4.0.tar.gz | tar xz --strip 1 -C /opt/noVNC && \
+    wget -qO- https://github.com/novnc/websockify/archive/v0.11.0.tar.gz | tar xz --strip 1 -C /opt/noVNC/utils/websockify && \
+    ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
+
+# Install IBC (Interactive Brokers Controller)
+RUN wget -q https://github.com/IbcAlpha/IBC/releases/download/3.17.0/IBCLinux-3.17.0.zip && \
+    unzip -q IBCLinux-3.17.0.zip -d /opt/ibc && \
+    chmod +x /opt/ibc/*.sh /opt/ibc/*/*.sh && \
+    rm IBCLinux-3.17.0.zip
+
+# Install IB Gateway
+RUN wget -q https://download2.interactivebrokers.com/installers/ibgateway/latest-standalone/ibgateway-latest-standalone-linux-x64.sh && \
+    chmod +x ibgateway-latest-standalone-linux-x64.sh && \
+    ./ibgateway-latest-standalone-linux-x64.sh -q -dir /opt/ibgateway && \
+    rm ibgateway-latest-standalone-linux-x64.sh
+
+# Install Python packages
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt gunicorn
+
+# Copy application files
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/staticfiles /app/media /app/data /app/logs /var/log/supervisor
+
+# Copy configuration files
+COPY railway/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY railway/nginx.conf /etc/nginx/sites-available/default
+COPY railway/ibc-config.ini /opt/ibc/config.ini
+COPY railway/start-all.sh /start-all.sh
+RUN chmod +x /start-all.sh
+
+# Collect static files
+RUN python3 manage.py collectstatic --noinput || true
+
+# Expose port for Railway
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8080/ || exit 1
+
+CMD ["/start-all.sh"]
