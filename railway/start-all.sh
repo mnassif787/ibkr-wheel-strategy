@@ -8,8 +8,15 @@ echo "================================================"
 # Get PORT from Railway (defaults to 8080)
 export PORT=${PORT:-8080}
 
+# Set defaults for IBC template variables
+export TRADING_MODE=${TRADING_MODE:-paper}
+export READ_ONLY_API=${READ_ONLY_API:-}
+
 # Update nginx to listen on Railway's port
 sed -i "s/listen 8080/listen $PORT/g" /etc/nginx/sites-available/default
+
+# Clear stale X11 lock files (critical for Xvfb restart reliability)
+rm -f /tmp/.X1-lock
 
 # Run Django migrations
 echo "Running database migrations..."
@@ -24,8 +31,10 @@ fi
 
 echo "================================================"
 echo "Starting all services with Supervisor..."
-echo "Django: http://0.0.0.0:$PORT"
+echo "Django:     http://0.0.0.0:$PORT"
 echo "VNC Access: http://0.0.0.0:$PORT/vnc/"
+echo "Trading:    ${TRADING_MODE}"
+echo "Login:      $([ -n "$TWS_USERID" ] && echo "automated ($TWS_USERID)" || echo "manual (use VNC)")"
 echo "================================================"
 
 # Start supervisord (manages all services)

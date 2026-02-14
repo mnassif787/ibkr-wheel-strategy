@@ -1,182 +1,104 @@
-# Multi-service container for Railway: Django + IB Gateway
+# ============================================================
+# Multi-service container: Django + IB Gateway for Railway
+# Based on the proven ghcr.io/unusualalpha/ib-gateway approach
+# ============================================================
 FROM ubuntu:22.04
 
-# Prevent interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    DISPLAY=:1
 
 WORKDIR /app
 
-# Install system dependencies
+# ---- Install ALL system dependencies in one layer ----
+# X11/GUI packages match exactly what the proven community
+# IB Gateway Docker image (ghcr.io/unusualalpha/ib-gateway) uses.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Python and build tools
-    python3.11 \
-    python3-pip \
-    python3.11-venv \
-    build-essential \
-    curl \
-    # IB Gateway dependencies (full JRE required - headless lacks AWT/Swing for GUI)
-    openjdk-17-jre \
-    xvfb \
-    x11vnc \
-    socat \
-    supervisor \
-    procps \
-    net-tools \
-    # X11 libraries and fonts required for Java Swing GUI rendering
-    libxtst6 \
-    libxrender1 \
-    libxi6 \
-    libxext6 \
-    libfreetype6 \
-    fontconfig \
-    fonts-dejavu-core \
-    libfontconfig1 \
-    libgtk-3-0 \
-    x11-utils \
-    # Lightweight window manager (required for Swing windows to render)
-    fluxbox \
-    # VNC web client
-    wget \
-    unzip \
-    # Nginx for proxying
+    # Python
+    python3.11 python3-pip python3.11-venv build-essential \
+    # Download tools
+    curl ca-certificates unzip wget \
+    # X11/GUI — proven to work with IB Gateway (from community image)
+    # NOTE: libgtk2.0-bin (NOT libgtk-3-0) — IB Gateway uses GTK2
+    gettext xvfb libxslt-dev libxrender1 libxtst6 libxi6 libgtk2.0-bin \
+    socat x11vnc \
+    # Process management
+    supervisor procps net-tools \
+    # Nginx
     nginx \
     && rm -rf /var/lib/apt/lists/*
 
-# Create minimal fluxbox config to suppress first-run dialog and hide toolbar
-RUN mkdir -p /root/.fluxbox && \
-    echo "session.screen0.toolbar.visible: false" > /root/.fluxbox/init && \
-    echo "session.menuFile: /root/.fluxbox/menu" >> /root/.fluxbox/init && \
-    echo "[begin] (fluxbox)" > /root/.fluxbox/menu && \
-    echo "[end]" >> /root/.fluxbox/menu && \
-    touch /root/.fluxbox/startup
-
-# Install noVNC for web-based VNC access
+# ---- Install noVNC (web-based VNC client) ----
 RUN mkdir -p /opt/noVNC/utils/websockify && \
     wget -qO- https://github.com/novnc/noVNC/archive/v1.4.0.tar.gz | tar xz --strip 1 -C /opt/noVNC && \
     wget -qO- https://github.com/novnc/websockify/archive/v0.11.0.tar.gz | tar xz --strip 1 -C /opt/noVNC/utils/websockify && \
     ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
 
-# Install IBC (Interactive Brokers Controller)
-RUN wget -q https://github.com/IbcAlpha/IBC/releases/download/3.17.0/IBCLinux-3.17.0.zip && \
-    unzip -q IBCLinux-3.17.0.zip -d /opt/ibc && \
-    chmod +x /opt/ibc/*.sh /opt/ibc/*/*.sh && \
-    rm IBCLinux-3.17.0.zip
+# ---- Install IB Gateway ----
+# Download latest, install to temp dir, detect version, move to IBC-expected path.
+# IBC 3.17.0 expects: $TWS_PATH/ibgateway/$VERSION/jars/
+# By installing to temp dir first, we avoid the ibgateway file/directory collision.
+RUN curl -sSL https://download2.interactivebrokers.com/installers/ibgateway/latest-standalone/ibgateway-latest-standalone-linux-x64.sh \
+        -o /tmp/ibgateway-installer.sh && \
+    chmod +x /tmp/ibgateway-installer.sh && \
+    /tmp/ibgateway-installer.sh -q -dir /tmp/ibgateway-install && \
+    rm /tmp/ibgateway-installer.sh && \
+    # Detect version from .desktop file
+    VERSION=$(ls /tmp/ibgateway-install/*.desktop 2>/dev/null | grep -oP 'Gateway \K[\d.]+' | head -1 | sed 's/\.$//' || echo "10.43") && \
+    echo "Detected IB Gateway version: $VERSION" && \
+    # Create IBC-expected directory structure
+    mkdir -p "/root/Jts/ibgateway/$VERSION" && \
+    # Copy all files including hidden dirs (.install4j)
+    cp -a /tmp/ibgateway-install/. "/root/Jts/ibgateway/$VERSION/" && \
+    # Save version for runtime use
+    echo "$VERSION" > /root/Jts/ibgateway-version.txt && \
+    rm -rf /tmp/ibgateway-install && \
+    # Verify critical files
+    echo "=== Verifying IB Gateway install ===" && \
+    test -d "/root/Jts/ibgateway/$VERSION/jars" && \
+    ls "/root/Jts/ibgateway/$VERSION/"*.vmoptions && \
+    echo "=== IB Gateway $VERSION installed to /root/Jts/ibgateway/$VERSION ==="
 
-# Install IB Gateway
-# Install IB Gateway - split into separate RUN commands so failures are visible
-RUN wget -q https://download2.interactivebrokers.com/installers/ibgateway/latest-standalone/ibgateway-latest-standalone-linux-x64.sh && \
-    chmod +x ibgateway-latest-standalone-linux-x64.sh && \
-    ./ibgateway-latest-standalone-linux-x64.sh -q -dir /opt/ibgateway && \
-    rm ibgateway-latest-standalone-linux-x64.sh
+# ---- Install IBC (IB Controller) 3.17.0 ----
+RUN curl -sSL https://github.com/IbcAlpha/IBC/releases/download/3.17.0/IBCLinux-3.17.0.zip \
+        -o /tmp/ibc.zip && \
+    mkdir -p /root/ibc && \
+    unzip -q /tmp/ibc.zip -d /root/ibc && \
+    chmod -R u+x /root/ibc/*.sh /root/ibc/scripts/*.sh && \
+    rm /tmp/ibc.zip
 
-# Restructure IB Gateway directories for IBC 3.17.0 path resolution
-# IBC's ibcstart.sh for --gateway mode on Linux uses:
-#   gateway_program_path = $TWS_PATH/ibgateway/$VERSION  (primary)
-#   tws_program_path     = $TWS_PATH/$VERSION             (fallback)
-# PROBLEM: The installer creates a FILE named "ibgateway" (the launcher executable)
-#   at /opt/ibgateway/ibgateway, blocking creation of a DIRECTORY at that path.
-# SOLUTION: Rename the executable, then create both directory structures.
-RUN set -eux && \
-    echo "=== Files after IB Gateway install ===" && \
-    ls -la /opt/ibgateway/ && \
-    echo "=== Detecting version ===" && \
-    RAW_VERSION=$(ls /opt/ibgateway/*.desktop 2>/dev/null | grep -oP 'Gateway \K[\d.]+' | head -1 || echo "") && \
-    if [ -z "$RAW_VERSION" ]; then \
-        echo "WARNING: No .desktop file found, trying alternative version detection"; \
-        RAW_VERSION=$(find /opt/ibgateway -name "*.jar" -path "*/jars/*" | head -1 | grep -oP '\d+\.\d+' | head -1 || echo "10.43"); \
-    fi && \
-    INSTALLED_VERSION=$(echo "$RAW_VERSION" | sed 's/\.$//' | sed 's/\.$//') && \
-    echo "IB Gateway version: $INSTALLED_VERSION (raw: $RAW_VERSION)" && \
-    echo "$INSTALLED_VERSION" > /opt/ibgateway/VERSION.txt && \
-    echo "=== Checking for vmoptions ===" && \
-    ls -la /opt/ibgateway/*.vmoptions 2>/dev/null || echo "No vmoptions found in root" && \
-    if ! ls /opt/ibgateway/*.vmoptions 1>/dev/null 2>&1; then \
-        echo "Creating ibgateway.vmoptions with module-opens for Java 17+"; \
-        printf '%s\n' \
-            "-Xmx768m" \
-            "-XX:+UseG1GC" \
-            "-XX:MaxGCPauseMillis=200" \
-            > /opt/ibgateway/ibgateway.vmoptions; \
-    fi && \
-    echo "=== Appending --add-opens to vmoptions for Java 17+ ===" && \
-    for vmf in /opt/ibgateway/*.vmoptions; do \
-        if ! grep -q 'add-opens' "$vmf" 2>/dev/null; then \
-            printf '%s\n' \
-                "--add-opens=java.base/java.lang=ALL-UNNAMED" \
-                "--add-opens=java.base/java.util=ALL-UNNAMED" \
-                "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED" \
-                "--add-opens=java.desktop/java.awt=ALL-UNNAMED" \
-                "--add-opens=java.desktop/java.awt.dnd=ALL-UNNAMED" \
-                "--add-opens=java.desktop/javax.swing=ALL-UNNAMED" \
-                "--add-opens=java.desktop/javax.swing.event=ALL-UNNAMED" \
-                "--add-opens=java.desktop/javax.swing.plaf.basic=ALL-UNNAMED" \
-                "--add-opens=java.desktop/javax.swing.table=ALL-UNNAMED" \
-                "--add-opens=java.desktop/sun.awt=ALL-UNNAMED" \
-                "--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED" \
-                >> "$vmf"; \
-            echo "Added --add-opens to $vmf"; \
-        fi; \
-    done && \
-    echo "=== vmoptions contents ===" && \
-    cat /opt/ibgateway/ibgateway.vmoptions && \
-    echo "=== Checking for .install4j ===" && \
-    ls -la /opt/ibgateway/.install4j/ 2>/dev/null || echo "No .install4j directory found" && \
-    echo "=== Renaming ibgateway executable to make way for directory ===" && \
-    if [ -f /opt/ibgateway/ibgateway ]; then \
-        mv /opt/ibgateway/ibgateway /opt/ibgateway/ibgateway-bin; \
-        echo "Renamed /opt/ibgateway/ibgateway -> /opt/ibgateway/ibgateway-bin"; \
-    fi && \
-    echo "=== Creating PRIMARY gateway path: /opt/ibgateway/ibgateway/$INSTALLED_VERSION ===" && \
-    mkdir -p "/opt/ibgateway/ibgateway/$INSTALLED_VERSION" && \
-    cp -r /opt/ibgateway/jars "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/" && \
-    if [ -d /opt/ibgateway/.install4j ]; then cp -r /opt/ibgateway/.install4j "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/"; fi && \
-    cp /opt/ibgateway/*.vmoptions "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/" && \
-    echo "=== Creating FALLBACK tws path: /opt/ibgateway/$INSTALLED_VERSION ===" && \
-    mkdir -p "/opt/ibgateway/$INSTALLED_VERSION" && \
-    cp -r /opt/ibgateway/jars "/opt/ibgateway/$INSTALLED_VERSION/" && \
-    if [ -d /opt/ibgateway/.install4j ]; then cp -r /opt/ibgateway/.install4j "/opt/ibgateway/$INSTALLED_VERSION/"; fi && \
-    cp /opt/ibgateway/ibgateway.vmoptions "/opt/ibgateway/$INSTALLED_VERSION/tws.vmoptions" && \
-    cp /opt/ibgateway/ibgateway.vmoptions "/opt/ibgateway/$INSTALLED_VERSION/ibgateway.vmoptions" && \
-    echo "=== VERIFY PRIMARY ===" && \
-    ls -la "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/" && \
-    test -d "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/jars" && \
-    test -f "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/ibgateway.vmoptions" && \
-    echo "=== VERIFY FALLBACK ===" && \
-    ls -la "/opt/ibgateway/$INSTALLED_VERSION/" && \
-    test -d "/opt/ibgateway/$INSTALLED_VERSION/jars" && \
-    test -f "/opt/ibgateway/$INSTALLED_VERSION/tws.vmoptions" && \
-    echo "=== ALL VERIFICATIONS PASSED ==="
+# ---- Create IB Gateway pre-configuration (jts.ini) ----
+# This matches the community image's proven config
+RUN printf '[IBGateway]\nWriteDebug=false\nTrustedIPs=127.0.0.1\nApiOnly=true\n\n[Logon]\nLocale=en\nTimeZone=Etc/UTC\nUseSSL=true\ndisplayedproxymsg=1\ns3store=true\n\n[Communication]\n' \
+    > /root/Jts/jts.ini
 
-# Install Python packages
+# ---- Install Python packages ----
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt gunicorn
 
-# Copy application files
+# ---- Copy application ----
 COPY . .
 
-# Create necessary directories
-RUN mkdir -p /app/staticfiles /app/media /app/data /var/log/supervisor && \
-    # Remove default nginx site and ensure our config is active
+# ---- Setup configuration ----
+RUN mkdir -p /app/staticfiles /app/media /app/data /var/log/supervisor /root/scripts && \
     rm -f /etc/nginx/sites-enabled/default
 
-# Copy configuration files
 COPY railway/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY railway/nginx.conf /etc/nginx/sites-available/default
 RUN ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
-COPY railway/ibc-config.ini /opt/ibc/config.ini
-COPY railway/start-ibgateway.sh /opt/ibc/start-ibgateway.sh
+
+# IBC config is a template — envsubst fills in env vars at runtime
+COPY railway/ibc-config.ini /root/ibc/config.ini.tmpl
+COPY railway/start-ibgateway.sh /root/scripts/run_gateway.sh
 COPY railway/start-all.sh /start-all.sh
-RUN chmod +x /start-all.sh /opt/ibc/start-ibgateway.sh
+RUN chmod +x /start-all.sh /root/scripts/run_gateway.sh /root/ibc/scripts/*.sh /root/ibc/*.sh
 
 # Collect static files
 RUN python3 manage.py collectstatic --noinput || true
 
-# Expose port for Railway
 EXPOSE 8080
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -f http://localhost:8080/ || exit 1
 
