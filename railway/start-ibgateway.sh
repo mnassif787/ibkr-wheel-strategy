@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+# Note: NOT using set -e because we need to catch IBC exit code 7 and fallback
 
 echo "============================================="
 echo "=== IB Gateway Startup Script             ==="
@@ -157,6 +157,30 @@ fi
 
 echo ""
 echo "============================================="
+echo "=== Pre-launch IBC Path Simulation        ==="
+echo "============================================="
+# Simulate exactly what IBC's ibcstart.sh will compute
+echo "IBC will resolve these paths with --tws-path=/opt/ibgateway --gateway $INSTALLED_VERSION:"
+echo "  gateway_program_path = /opt/ibgateway/ibgateway/$INSTALLED_VERSION"
+echo "  tws_program_path     = /opt/ibgateway/$INSTALLED_VERSION"
+echo ""
+echo "Checking gateway_program_path/jars:"
+ls -la "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/jars/" 2>/dev/null | head -3 || echo "  NOT FOUND"
+echo "Checking ibgateway.vmoptions in gateway_program_path:"
+ls -la "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/ibgateway.vmoptions" 2>/dev/null || echo "  NOT FOUND"
+echo ""
+echo "Checking tws_program_path/jars:"
+ls -la "/opt/ibgateway/$INSTALLED_VERSION/jars/" 2>/dev/null | head -3 || echo "  NOT FOUND"
+echo "Checking tws.vmoptions in tws_program_path:"
+ls -la "/opt/ibgateway/$INSTALLED_VERSION/tws.vmoptions" 2>/dev/null || echo "  NOT FOUND"
+echo ""
+
+# Full tree dump for debugging
+echo "=== Complete /opt/ibgateway/ tree ==="
+find /opt/ibgateway -maxdepth 4 -type f -name "*.vmoptions" -o -type d -name "jars" -o -type d -name ".install4j" 2>/dev/null
+echo ""
+
+echo "============================================="
 echo "=== Launching IBC                         ==="
 echo "============================================="
 
@@ -176,4 +200,108 @@ fi
 echo "Command: /opt/ibc/scripts/ibcstart.sh $IBC_ARGS"
 echo ""
 
-exec /opt/ibc/scripts/ibcstart.sh $IBC_ARGS
+# Run IBC but if it fails with exit code 7 (vmoptions not found), try direct launch
+/opt/ibc/scripts/ibcstart.sh $IBC_ARGS
+IBC_EXIT=$?
+
+if [ $IBC_EXIT -eq 7 ]; then
+    echo ""
+    echo "============================================="
+    echo "=== IBC FAILED (exit 7) - Direct Launch   ==="
+    echo "============================================="
+    echo "IBC could not find vmoptions. Launching IB Gateway directly with Java."
+    echo ""
+
+    # Build classpath from jars
+    JARS_DIR=""
+    for candidate in \
+        "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/jars" \
+        "/opt/ibgateway/$INSTALLED_VERSION/jars" \
+        "/opt/ibgateway/jars"; do
+        if [ -d "$candidate" ]; then
+            JARS_DIR="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$JARS_DIR" ]; then
+        echo "FATAL: Cannot find any jars directory"
+        find /opt/ibgateway -type d -name jars 2>/dev/null
+        exit 1
+    fi
+
+    echo "Using jars from: $JARS_DIR"
+
+    # Build classpath
+    IBC_CP=""
+    for jar in "$JARS_DIR"/*.jar; do
+        if [ -n "$IBC_CP" ]; then IBC_CP="$IBC_CP:"; fi
+        IBC_CP="$IBC_CP$jar"
+    done
+
+    # Add install4j runtime if available
+    for candidate_i4j in \
+        "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/.install4j" \
+        "/opt/ibgateway/$INSTALLED_VERSION/.install4j" \
+        "/opt/ibgateway/.install4j"; do
+        if [ -f "$candidate_i4j/i4jruntime.jar" ]; then
+            IBC_CP="$IBC_CP:$candidate_i4j/i4jruntime.jar"
+            break
+        fi
+    done
+
+    # Add IBC jar
+    IBC_CP="$IBC_CP:/opt/ibc/IBC.jar"
+
+    # Read vmoptions if available
+    VM_OPTS=""
+    for candidate_vm in \
+        "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/ibgateway.vmoptions" \
+        "/opt/ibgateway/$INSTALLED_VERSION/ibgateway.vmoptions" \
+        "/opt/ibgateway/$INSTALLED_VERSION/tws.vmoptions" \
+        "/opt/ibgateway/ibgateway.vmoptions"; do
+        if [ -f "$candidate_vm" ]; then
+            while IFS= read -r line; do
+                case "$line" in
+                    "#"*|"-D"*|"") continue ;;
+                    *) VM_OPTS="$VM_OPTS $line" ;;
+                esac
+            done < "$candidate_vm"
+            echo "Read VM options from: $candidate_vm"
+            break
+        fi
+    done
+
+    if [ -z "$VM_OPTS" ]; then
+        VM_OPTS="-Xmx768m -XX:+UseG1GC"
+    fi
+
+    JAVA_EXEC="${JAVA_BIN:-/usr/lib/jvm/java-17-openjdk-amd64/bin}/java"
+
+    echo "Java: $JAVA_EXEC"
+    echo "Classpath entries: $(echo "$IBC_CP" | tr ':' '\n' | wc -l)"
+    echo "VM Options: $VM_OPTS"
+    echo ""
+
+    # Module access flags for Java 17+
+    MODULE_ACCESS="--add-opens=java.base/java.util=ALL-UNNAMED \
+--add-opens=java.base/java.util.concurrent=ALL-UNNAMED \
+--add-opens=java.desktop/java.awt=ALL-UNNAMED \
+--add-opens=java.desktop/javax.swing=ALL-UNNAMED \
+--add-opens=java.desktop/javax.swing.event=ALL-UNNAMED"
+
+    echo "Launching: $JAVA_EXEC $MODULE_ACCESS $VM_OPTS -DjtsConfigDir=/opt/ibgateway -cp $IBC_CP ibcalpha.ibc.IbcGateway /opt/ibc/config.ini paper"
+
+    exec "$JAVA_EXEC" $MODULE_ACCESS $VM_OPTS \
+        -DjtsConfigDir=/opt/ibgateway \
+        -Dtwslaunch.autoupdate.serviceImpl=com.ib.tws.twslaunch.install4j.Install4jAutoUpdateService \
+        -Dchannel=latest \
+        -Dexe4j.isInstall4j=true \
+        -DinstallType=standalone \
+        -cp "$IBC_CP" \
+        ibcalpha.ibc.IbcGateway \
+        /opt/ibc/config.ini \
+        paper
+fi
+
+exit $IBC_EXIT
