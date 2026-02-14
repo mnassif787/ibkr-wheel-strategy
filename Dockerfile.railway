@@ -48,35 +48,58 @@ RUN wget -q https://download2.interactivebrokers.com/installers/ibgateway/latest
     chmod +x ibgateway-latest-standalone-linux-x64.sh && \
     ./ibgateway-latest-standalone-linux-x64.sh -q -dir /opt/ibgateway && \
     rm ibgateway-latest-standalone-linux-x64.sh && \
-    # Detect installed version from desktop file and clean it up
+    # Detect installed version from desktop file
     RAW_VERSION=$(ls /opt/ibgateway/*.desktop 2>/dev/null | grep -oP 'Gateway \K[\d.]+' | head -1) && \
     INSTALLED_VERSION=$(echo "$RAW_VERSION" | sed 's/\.$//' | sed 's/\.$//') && \
-    echo "Detected IB Gateway version: $INSTALLED_VERSION (raw: $RAW_VERSION)" && \
-    echo "Files before restructuring:" && \
-    ls -la /opt/ibgateway/ && \
-    # Create version-specific directory WITH dots (IBC expects /opt/ibgateway/10.43/jars/)
+    echo "=== IB Gateway version: $INSTALLED_VERSION (raw: $RAW_VERSION) ===" && \
+    echo "Files after install:" && ls -la /opt/ibgateway/ && \
+    # ----------------------------------------------------------------
+    # IBC 3.17.0 path resolution for --gateway mode on Linux:
+    #   gateway_program_path = $TWS_PATH/ibgateway/$VERSION
+    #   tws_program_path     = $TWS_PATH/$VERSION (fallback)
+    #
+    # IBC first checks gateway_program_path/jars.
+    # If found: uses ibgateway.vmoptions from that path
+    # If NOT found: falls back to tws_program_path with tws.vmoptions
+    #
+    # It also needs .install4j/ at program_path for i4jruntime.jar
+    # and Java discovery (inst_jre.cfg / pref_jre.cfg).
+    # ----------------------------------------------------------------
+    #
+    # Create a minimal vmoptions if installer didn't create one
+    if ! ls /opt/ibgateway/*.vmoptions 1>/dev/null 2>&1; then \
+        echo -e "-Xmx768m\n-XX:+UseG1GC\n-XX:MaxGCPauseMillis=200" > /opt/ibgateway/ibgateway.vmoptions; \
+        echo "Created minimal ibgateway.vmoptions (installer did not provide one)"; \
+    fi && \
+    #
+    # 1. PRIMARY: Create gateway-specific path IBC expects
+    #    /opt/ibgateway/ibgateway/$VERSION/ with jars, .install4j, vmoptions
+    mkdir -p "/opt/ibgateway/ibgateway/$INSTALLED_VERSION" && \
+    cp -r /opt/ibgateway/jars "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/" && \
+    cp -r /opt/ibgateway/.install4j "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/" && \
+    cp /opt/ibgateway/*.vmoptions "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/" && \
+    #
+    # 2. FALLBACK: Create TWS-style path as backup
+    #    /opt/ibgateway/$VERSION/ with jars, .install4j, tws.vmoptions
     mkdir -p "/opt/ibgateway/$INSTALLED_VERSION" && \
-    # Move jars folder to version-specific folder (required by IBC)
-    mv /opt/ibgateway/jars "/opt/ibgateway/$INSTALLED_VERSION/" && \
-    # Copy data folder to version-specific folder
-    if [ -d "/opt/ibgateway/data" ]; then \
-        cp -r /opt/ibgateway/data "/opt/ibgateway/$INSTALLED_VERSION/"; \
-    fi && \
-    # Copy vmoptions to version folder BUT KEEP ORIGINAL in root (IBC needs both)
-    if ls /opt/ibgateway/*.vmoptions 1> /dev/null 2>&1; then \
-        cp /opt/ibgateway/*.vmoptions "/opt/ibgateway/$INSTALLED_VERSION/"; \
-        echo "Copied vmoptions to version directory"; \
-    fi && \
-    # Create marker file with cleaned version
+    cp -r /opt/ibgateway/jars "/opt/ibgateway/$INSTALLED_VERSION/" && \
+    cp -r /opt/ibgateway/.install4j "/opt/ibgateway/$INSTALLED_VERSION/" && \
+    cp /opt/ibgateway/ibgateway.vmoptions "/opt/ibgateway/$INSTALLED_VERSION/tws.vmoptions" && \
+    cp /opt/ibgateway/ibgateway.vmoptions "/opt/ibgateway/$INSTALLED_VERSION/ibgateway.vmoptions" && \
+    #
+    # 3. Save version for runtime scripts
     echo $INSTALLED_VERSION > /opt/ibgateway/VERSION.txt && \
-    echo "Created structure: /opt/ibgateway/$INSTALLED_VERSION/jars" && \
+    #
+    # 4. Verify build output
+    echo "=== Gateway path (primary): /opt/ibgateway/ibgateway/$INSTALLED_VERSION ===" && \
+    ls -la "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/" && \
+    echo "=== TWS path (fallback): /opt/ibgateway/$INSTALLED_VERSION ===" && \
     ls -la "/opt/ibgateway/$INSTALLED_VERSION/" && \
-    echo "Verifying jars folder exists:" && \
-    ls -la "/opt/ibgateway/$INSTALLED_VERSION/jars/" | head -20 && \
-    echo "Verifying vmoptions files in root (CRITICAL for IBC):" && \
-    ls -la /opt/ibgateway/*.vmoptions || echo "ERROR: No vmoptions in root!" && \
-    echo "Verifying vmoptions files in version directory:" && \
-    ls -la "/opt/ibgateway/$INSTALLED_VERSION/"*.vmoptions || echo "No vmoptions in version dir"
+    echo "=== Jars check ===" && \
+    ls "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/jars/" | head -5 && \
+    echo "=== .install4j check ===" && \
+    ls "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/.install4j/" | head -5 && \
+    echo "=== Build verification PASSED ==="
 
 # Install Python packages
 COPY requirements.txt .
