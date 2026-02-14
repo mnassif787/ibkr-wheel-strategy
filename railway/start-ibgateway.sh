@@ -16,6 +16,10 @@ fi
 
 INSTALLED_VERSION=$(cat /opt/ibgateway/VERSION.txt)
 echo "IB Gateway Version: $INSTALLED_VERSION"
+
+# Ensure DISPLAY is set for X11 GUI (Xvfb runs on :1 via supervisor)
+export DISPLAY=${DISPLAY:-:1}
+echo "DISPLAY=$DISPLAY"
 echo ""
 
 # ----------------------------------------------------------------

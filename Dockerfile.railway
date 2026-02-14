@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11-venv \
     build-essential \
     curl \
-    # IB Gateway dependencies
-    openjdk-17-jre-headless \
+    # IB Gateway dependencies (full JRE required - headless lacks AWT/Swing for GUI)
+    openjdk-17-jre \
     xvfb \
     x11vnc \
     socat \
