@@ -60,7 +60,8 @@ else
 fi
 
 IBC_ARGS="$IBC_ARGS --mode=${TRADING_MODE:-paper}"
-IBC_ARGS="$IBC_ARGS --on2fatimeout=${TWOFA_TIMEOUT_ACTION:-restart}"
+# Do NOT restart on 2FA timeout — let user complete manually via VNC
+IBC_ARGS="$IBC_ARGS --on2fatimeout=${TWOFA_TIMEOUT_ACTION:-exit}"
 
 # Detect bundled JRE (installed by IB Gateway's install4j installer)
 # This is the PROVEN approach — no system OpenJDK needed

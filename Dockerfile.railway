@@ -54,10 +54,29 @@ RUN curl -sSL https://download2.interactivebrokers.com/installers/ibgateway/late
     # Save version for runtime use
     echo "$VERSION" > /root/Jts/ibgateway-version.txt && \
     rm -rf /tmp/ibgateway-install && \
+    # Add --add-opens flags for Java 17+ module access (fixes InaccessibleObjectException)
+    for vmf in /root/Jts/ibgateway/$VERSION/*.vmoptions; do \
+        if [ -f "$vmf" ] && ! grep -q 'add-opens' "$vmf"; then \
+            printf '%s\n' \
+                '--add-opens=java.base/java.lang=ALL-UNNAMED' \
+                '--add-opens=java.base/java.util=ALL-UNNAMED' \
+                '--add-opens=java.base/java.util.concurrent=ALL-UNNAMED' \
+                '--add-opens=java.desktop/java.awt=ALL-UNNAMED' \
+                '--add-opens=java.desktop/javax.swing=ALL-UNNAMED' \
+                '--add-opens=java.desktop/javax.swing.event=ALL-UNNAMED' \
+                '--add-opens=java.desktop/javax.swing.plaf.basic=ALL-UNNAMED' \
+                '--add-opens=java.desktop/javax.swing.table=ALL-UNNAMED' \
+                '--add-opens=java.desktop/sun.awt=ALL-UNNAMED' \
+                '--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED' \
+                >> "$vmf"; \
+            echo "Added --add-opens to $vmf"; \
+        fi; \
+    done && \
     # Verify critical files
     echo "=== Verifying IB Gateway install ===" && \
     test -d "/root/Jts/ibgateway/$VERSION/jars" && \
     ls "/root/Jts/ibgateway/$VERSION/"*.vmoptions && \
+    cat "/root/Jts/ibgateway/$VERSION/"*.vmoptions && \
     echo "=== IB Gateway $VERSION installed to /root/Jts/ibgateway/$VERSION ==="
 
 # ---- Install IBC (IB Controller) 3.17.0 ----
