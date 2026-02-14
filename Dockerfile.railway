@@ -54,7 +54,9 @@ RUN wget -q https://download2.interactivebrokers.com/installers/ibgateway/latest
 # IBC's ibcstart.sh for --gateway mode on Linux uses:
 #   gateway_program_path = $TWS_PATH/ibgateway/$VERSION  (primary)
 #   tws_program_path     = $TWS_PATH/$VERSION             (fallback)
-# If primary/jars missing, falls back and looks for tws.vmoptions (not ibgateway.vmoptions)
+# PROBLEM: The installer creates a FILE named "ibgateway" (the launcher executable)
+#   at /opt/ibgateway/ibgateway, blocking creation of a DIRECTORY at that path.
+# SOLUTION: Rename the executable, then create both directory structures.
 RUN set -eux && \
     echo "=== Files after IB Gateway install ===" && \
     ls -la /opt/ibgateway/ && \
@@ -75,6 +77,11 @@ RUN set -eux && \
     fi && \
     echo "=== Checking for .install4j ===" && \
     ls -la /opt/ibgateway/.install4j/ 2>/dev/null || echo "No .install4j directory found" && \
+    echo "=== Renaming ibgateway executable to make way for directory ===" && \
+    if [ -f /opt/ibgateway/ibgateway ]; then \
+        mv /opt/ibgateway/ibgateway /opt/ibgateway/ibgateway-bin; \
+        echo "Renamed /opt/ibgateway/ibgateway -> /opt/ibgateway/ibgateway-bin"; \
+    fi && \
     echo "=== Creating PRIMARY gateway path: /opt/ibgateway/ibgateway/$INSTALLED_VERSION ===" && \
     mkdir -p "/opt/ibgateway/ibgateway/$INSTALLED_VERSION" && \
     cp -r /opt/ibgateway/jars "/opt/ibgateway/ibgateway/$INSTALLED_VERSION/" && \
