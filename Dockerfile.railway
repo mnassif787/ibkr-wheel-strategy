@@ -24,6 +24,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     supervisor \
     procps \
     net-tools \
+    # X11 libraries and fonts required for Java Swing GUI rendering
+    libxtst6 \
+    libxrender1 \
+    libxi6 \
+    libxext6 \
+    libfreetype6 \
+    fontconfig \
+    fonts-dejavu-core \
+    libfontconfig1 \
+    libgtk-3-0 \
+    x11-utils \
     # VNC web client
     wget \
     unzip \

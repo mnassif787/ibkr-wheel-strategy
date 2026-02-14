@@ -6,6 +6,26 @@ echo "=== IB Gateway Startup Script             ==="
 echo "=== Date: $(date)                         ==="
 echo "============================================="
 
+# Wait for Xvfb to be fully ready before starting IB Gateway
+echo "Waiting for Xvfb on DISPLAY :1..."
+export DISPLAY=${DISPLAY:-:1}
+MAX_WAIT=30
+WAITED=0
+while ! xdpyinfo -display :1 >/dev/null 2>&1; do
+    if [ $WAITED -ge $MAX_WAIT ]; then
+        echo "WARNING: Xvfb not ready after ${MAX_WAIT}s, proceeding anyway"
+        break
+    fi
+    sleep 1
+    WAITED=$((WAITED + 1))
+done
+echo "Xvfb ready after ${WAITED}s (DISPLAY=$DISPLAY)"
+
+# Verify font configuration
+echo "=== Font check ==="
+fc-list 2>/dev/null | head -3 || echo "WARNING: No fonts found via fc-list"
+echo ""
+
 # Read the installed version
 if [ ! -f "/opt/ibgateway/VERSION.txt" ]; then
     echo "FATAL: VERSION.txt not found at /opt/ibgateway/VERSION.txt"
