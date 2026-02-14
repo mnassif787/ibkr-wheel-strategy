@@ -72,9 +72,34 @@ RUN set -eux && \
     echo "=== Checking for vmoptions ===" && \
     ls -la /opt/ibgateway/*.vmoptions 2>/dev/null || echo "No vmoptions found in root" && \
     if ! ls /opt/ibgateway/*.vmoptions 1>/dev/null 2>&1; then \
-        echo "Creating minimal ibgateway.vmoptions"; \
-        printf '%s\n' "-Xmx768m" "-XX:+UseG1GC" "-XX:MaxGCPauseMillis=200" > /opt/ibgateway/ibgateway.vmoptions; \
+        echo "Creating ibgateway.vmoptions with module-opens for Java 17+"; \
+        printf '%s\n' \
+            "-Xmx768m" \
+            "-XX:+UseG1GC" \
+            "-XX:MaxGCPauseMillis=200" \
+            > /opt/ibgateway/ibgateway.vmoptions; \
     fi && \
+    echo "=== Appending --add-opens to vmoptions for Java 17+ ===" && \
+    for vmf in /opt/ibgateway/*.vmoptions; do \
+        if ! grep -q 'add-opens' "$vmf" 2>/dev/null; then \
+            printf '%s\n' \
+                "--add-opens=java.base/java.lang=ALL-UNNAMED" \
+                "--add-opens=java.base/java.util=ALL-UNNAMED" \
+                "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED" \
+                "--add-opens=java.desktop/java.awt=ALL-UNNAMED" \
+                "--add-opens=java.desktop/java.awt.dnd=ALL-UNNAMED" \
+                "--add-opens=java.desktop/javax.swing=ALL-UNNAMED" \
+                "--add-opens=java.desktop/javax.swing.event=ALL-UNNAMED" \
+                "--add-opens=java.desktop/javax.swing.plaf.basic=ALL-UNNAMED" \
+                "--add-opens=java.desktop/javax.swing.table=ALL-UNNAMED" \
+                "--add-opens=java.desktop/sun.awt=ALL-UNNAMED" \
+                "--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED" \
+                >> "$vmf"; \
+            echo "Added --add-opens to $vmf"; \
+        fi; \
+    done && \
+    echo "=== vmoptions contents ===" && \
+    cat /opt/ibgateway/ibgateway.vmoptions && \
     echo "=== Checking for .install4j ===" && \
     ls -la /opt/ibgateway/.install4j/ 2>/dev/null || echo "No .install4j directory found" && \
     echo "=== Renaming ibgateway executable to make way for directory ===" && \
