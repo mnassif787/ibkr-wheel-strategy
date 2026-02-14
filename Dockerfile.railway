@@ -44,6 +44,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     && rm -rf /var/lib/apt/lists/*
 
+# Create minimal fluxbox config to suppress first-run dialog and hide toolbar
+RUN mkdir -p /root/.fluxbox && \
+    echo "session.screen0.toolbar.visible: false" > /root/.fluxbox/init && \
+    echo "session.menuFile: /root/.fluxbox/menu" >> /root/.fluxbox/init && \
+    echo "[begin] (fluxbox)" > /root/.fluxbox/menu && \
+    echo "[end]" >> /root/.fluxbox/menu && \
+    touch /root/.fluxbox/startup
+
 # Install noVNC for web-based VNC access
 RUN mkdir -p /opt/noVNC/utils/websockify && \
     wget -qO- https://github.com/novnc/noVNC/archive/v1.4.0.tar.gz | tar xz --strip 1 -C /opt/noVNC && \
