@@ -35,6 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 \
     libgtk-3-0 \
     x11-utils \
+    # Lightweight window manager (required for Swing windows to render)
+    fluxbox \
     # VNC web client
     wget \
     unzip \
