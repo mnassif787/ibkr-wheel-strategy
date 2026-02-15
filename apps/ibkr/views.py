@@ -67,9 +67,42 @@ def hub(request):
     if request.method == 'POST' and 'manual_add_ticker' in request.POST:
         ticker = request.POST.get('manual_add_ticker', '').upper().strip()
         if ticker:
-            if not Watchlist.objects.filter(ticker=ticker).exists():
-                Watchlist.objects.create(ticker=ticker)
-                messages.success(request, f'{ticker} added to watchlist.')
+            # Add to watchlist
+            watchlist_item, created = Watchlist.objects.get_or_create(ticker=ticker)
+            
+            if created:
+                # Fetch stock data immediately
+                try:
+                    stock_data = StockDataFetcher.fetch_stock_data(ticker)
+                    
+                    if stock_data:
+                        # Save stock data to database
+                        Stock.objects.update_or_create(
+                            ticker=ticker,
+                            defaults={
+                                'name': stock_data.get('name', ''),
+                                'last_price': stock_data.get('last_price'),
+                                'market_cap': stock_data.get('market_cap'),
+                                'beta': stock_data.get('beta'),
+                                'roe': stock_data.get('roe'),
+                                'free_cash_flow': stock_data.get('free_cash_flow'),
+                                'sector': stock_data.get('sector', ''),
+                                'industry': stock_data.get('industry', ''),
+                                'pe_ratio': stock_data.get('pe_ratio'),
+                                'forward_pe': stock_data.get('forward_pe'),
+                                'dividend_yield': stock_data.get('dividend_yield'),
+                                'fifty_two_week_high': stock_data.get('fifty_two_week_high'),
+                                'fifty_two_week_low': stock_data.get('fifty_two_week_low'),
+                                'avg_volume': stock_data.get('avg_volume'),
+                                'last_updated': stock_data.get('last_updated'),
+                            }
+                        )
+                        messages.success(request, f'✅ {ticker} added successfully! Price: ${stock_data.get("last_price", 0):.2f}')
+                    else:
+                        messages.warning(request, f'⚠️ {ticker} added to watchlist but failed to fetch data. Click refresh to try again.')
+                except Exception as e:
+                    logger.error(f"Error fetching data for {ticker}: {e}")
+                    messages.warning(request, f'⚠️ {ticker} added to watchlist but error fetching data: {str(e)}')
             else:
                 messages.info(request, f'{ticker} is already in the watchlist.')
         else:
@@ -1203,7 +1236,7 @@ def refresh_watchlist_data(request):
     referer = request.META.get('HTTP_REFERER', '')
     
     if not tickers:
-        messages.warning(request, 'No tickers in watchlist to refresh')
+        messages.warning(request, '⚠️ No tickers in watchlist to refresh. Add stocks first using the form above.')
         # Redirect back to referring page or dashboard
         if referer:
             return redirect(referer)
@@ -1211,38 +1244,49 @@ def refresh_watchlist_data(request):
     
     success_count = 0
     error_count = 0
+    error_details = []
     
     for ticker in tickers:
-        stock_data = StockDataFetcher.fetch_stock_data(ticker)
-        if stock_data:
-            Stock.objects.update_or_create(
-                ticker=ticker,
-                defaults={
-                    'name': stock_data.get('name', ''),
-                    'last_price': stock_data.get('last_price'),
-                    'market_cap': stock_data.get('market_cap'),
-                    'beta': stock_data.get('beta'),
-                    'roe': stock_data.get('roe'),
-                    'free_cash_flow': stock_data.get('free_cash_flow'),
-                    'sector': stock_data.get('sector', ''),
-                    'industry': stock_data.get('industry', ''),
-                    'pe_ratio': stock_data.get('pe_ratio'),
-                    'forward_pe': stock_data.get('forward_pe'),
-                    'dividend_yield': stock_data.get('dividend_yield'),
-                    'fifty_two_week_high': stock_data.get('fifty_two_week_high'),
-                    'fifty_two_week_low': stock_data.get('fifty_two_week_low'),
-                    'avg_volume': stock_data.get('avg_volume'),
-                    'last_updated': stock_data.get('last_updated'),
-                }
-            )
-            success_count += 1
-        else:
+        try:
+            stock_data = StockDataFetcher.fetch_stock_data(ticker)
+            if stock_data:
+                Stock.objects.update_or_create(
+                    ticker=ticker,
+                    defaults={
+                        'name': stock_data.get('name', ''),
+                        'last_price': stock_data.get('last_price'),
+                        'market_cap': stock_data.get('market_cap'),
+                        'beta': stock_data.get('beta'),
+                        'roe': stock_data.get('roe'),
+                        'free_cash_flow': stock_data.get('free_cash_flow'),
+                        'sector': stock_data.get('sector', ''),
+                        'industry': stock_data.get('industry', ''),
+                        'pe_ratio': stock_data.get('pe_ratio'),
+                        'forward_pe': stock_data.get('forward_pe'),
+                        'dividend_yield': stock_data.get('dividend_yield'),
+                        'fifty_two_week_high': stock_data.get('fifty_two_week_high'),
+                        'fifty_two_week_low': stock_data.get('fifty_two_week_low'),
+                        'avg_volume': stock_data.get('avg_volume'),
+                        'last_updated': stock_data.get('last_updated'),
+                    }
+                )
+                success_count += 1
+                logger.info(f"Successfully refreshed {ticker}: ${stock_data.get('last_price', 0):.2f}")
+            else:
+                error_count += 1
+                error_details.append(f"{ticker}: No data returned")
+                logger.warning(f"Failed to fetch data for {ticker}: No data returned")
+        except Exception as e:
             error_count += 1
+            error_details.append(f"{ticker}: {str(e)}")
+            logger.error(f"Error refreshing {ticker}: {e}", exc_info=True)
     
     if success_count > 0:
-        messages.success(request, f'Refreshed {success_count} stock(s) successfully')
+        messages.success(request, f'✅ Refreshed {success_count} stock(s) successfully')
     if error_count > 0:
-        messages.warning(request, f'Failed to refresh {error_count} stock(s)')
+        messages.warning(request, f'⚠️ Failed to refresh {error_count} stock(s). Check logs for details.')
+        if error_details:
+            logger.error(f"Refresh errors: {', '.join(error_details)}")
     
     # Redirect back to referring page or dashboard
     if referer:
