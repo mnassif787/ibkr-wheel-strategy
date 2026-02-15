@@ -52,11 +52,12 @@ from decimal import Decimal
 import csv
 import json
 from datetime import datetime
-from .models import Stock, Option, Signal, Watchlist, UserConfig, OptionPosition, StockWheelScore
+from .models import Stock, Option, Signal, Watchlist, UserConfig, OptionPosition, StockWheelScore, StockIndicator
 from .services.stock_data_fetcher import StockDataFetcher
 from .services.ai_analysis import AIAnalyzer
 from .services.ibkr_client import IBKRClient
 from .services.position_analyzer import PositionAnalyzer
+from .services.technical_analysis import TechnicalAnalysisService
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ def hub(request):
                     
                     if stock_data:
                         # Save stock data to database
-                        Stock.objects.update_or_create(
+                        stock, stock_created = Stock.objects.update_or_create(
                             ticker=ticker,
                             defaults={
                                 'name': stock_data.get('name', ''),
@@ -97,7 +98,40 @@ def hub(request):
                                 'last_updated': stock_data.get('last_updated'),
                             }
                         )
-                        messages.success(request, f'✅ {ticker} added successfully! Price: ${stock_data.get("last_price", 0):.2f}')
+                        
+                        # Calculate technical indicators
+                        try:
+                            indicators_data = TechnicalAnalysisService.calculate_all_indicators(ticker)
+                            
+                            if indicators_data:
+                                StockIndicator.objects.update_or_create(
+                                    stock=stock,
+                                    defaults={
+                                        'rsi': indicators_data.get('rsi'),
+                                        'rsi_signal': indicators_data.get('rsi_signal', 'NEUTRAL'),
+                                        'ema_50': indicators_data.get('ema_50'),
+                                        'ema_200': indicators_data.get('ema_200'),
+                                        'ema_trend': indicators_data.get('ema_trend', 'NEUTRAL'),
+                                        'bb_upper': indicators_data.get('bb_upper'),
+                                        'bb_middle': indicators_data.get('bb_middle'),
+                                        'bb_lower': indicators_data.get('bb_lower'),
+                                        'bb_position': indicators_data.get('bb_position', ''),
+                                        'support_level_1': indicators_data.get('support_level_1'),
+                                        'support_level_2': indicators_data.get('support_level_2'),
+                                        'support_level_3': indicators_data.get('support_level_3'),
+                                        'resistance_level_1': indicators_data.get('resistance_level_1'),
+                                        'resistance_level_2': indicators_data.get('resistance_level_2'),
+                                        'resistance_level_3': indicators_data.get('resistance_level_3'),
+                                        'price_history': indicators_data.get('price_history', []),
+                                        'last_calculated': timezone.now(),
+                                    }
+                                )
+                                messages.success(request, f'✅ {ticker} added successfully! Price: ${stock_data.get("last_price", 0):.2f} | Wheel Score calculated')
+                            else:
+                                messages.success(request, f'✅ {ticker} added! Price: ${stock_data.get("last_price", 0):.2f} | Note: Technical indicators calculation pending')
+                        except Exception as e:
+                            logger.error(f"Error calculating indicators for {ticker}: {e}")
+                            messages.success(request, f'✅ {ticker} added! Price: ${stock_data.get("last_price", 0):.2f} | Note: Technical indicators will be calculated on next refresh')
                     else:
                         messages.warning(request, f'⚠️ {ticker} added to watchlist but failed to fetch data. Click refresh to try again.')
                 except Exception as e:
