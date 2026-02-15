@@ -18,10 +18,15 @@ sed -i "s/listen 8080/listen $PORT/g" /etc/nginx/sites-available/default
 # Clear stale X11 lock files (critical for Xvfb restart reliability)
 rm -f /tmp/.X1-lock
 
+
 # Run Django migrations
 echo "Running database migrations..."
 cd /app
 python3 manage.py migrate --noinput
+
+# Auto-populate stocks if needed
+echo "Populating stocks if database is empty..."
+python3 manage.py discover_stocks || true
 
 # Create superuser if needed (only in development)
 if [ "$DEBUG" = "True" ]; then
