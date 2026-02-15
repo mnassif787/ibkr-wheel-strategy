@@ -4,6 +4,8 @@ from . import views
 app_name = 'ibkr'
 
 urlpatterns = [
+    # Debug endpoint for IBKR connection/data fetch
+    path('api/ibkr/debug/', views.ibkr_debug, name='ibkr_debug'),
     # Main Hub (new unified interface)
     path('', views.hub, name='hub'),
     
@@ -51,7 +53,6 @@ urlpatterns = [
     path('api/orders/cancel/', views.cancel_order_api, name='cancel_order_api'),
     path('api/orders/open/', views.open_orders_api, name='open_orders_api'),
     path('api/orders/quote/', views.option_quote_api, name='option_quote_api'),
-    
     # VNC Viewer for IB Gateway
     path('vnc/', views.vnc_viewer, name='vnc_viewer'),
 ]

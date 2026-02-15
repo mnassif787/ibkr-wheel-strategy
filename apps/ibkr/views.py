@@ -1,3 +1,46 @@
+from django.views.decorators.csrf import csrf_exempt
+import logging
+@csrf_exempt
+def ibkr_debug(request):
+    """Debug endpoint for IBKR connection and data fetch status"""
+    logger = logging.getLogger('apps.ibkr.services.ibkr_client')
+    import io
+    import traceback
+    from .services.ibkr_client import IBKRClient
+    debug_info = {}
+    try:
+        client = IBKRClient()
+        connected = client.ensure_connected()
+        debug_info['connected'] = connected
+        debug_info['is_connected'] = client.is_connected()
+        # Try fetching account summary
+        try:
+            acct = client.get_account_summary()
+            debug_info['account_summary'] = acct
+        except Exception as e:
+            debug_info['account_summary_error'] = str(e)
+            debug_info['account_summary_trace'] = traceback.format_exc()
+        # Try fetching portfolio positions
+        try:
+            positions = client.get_portfolio_positions()
+            debug_info['portfolio_positions'] = positions
+        except Exception as e:
+            debug_info['portfolio_positions_error'] = str(e)
+            debug_info['portfolio_positions_trace'] = traceback.format_exc()
+    except Exception as e:
+        debug_info['init_error'] = str(e)
+        debug_info['init_trace'] = traceback.format_exc()
+    # Optionally, include last 20 log lines if possible
+    try:
+        import os
+        log_path = os.path.join(os.path.dirname(__file__), '../../services/ibkr_client.log')
+        if os.path.exists(log_path):
+            with open(log_path, 'r') as f:
+                lines = f.readlines()[-20:]
+            debug_info['last_logs'] = lines
+    except Exception:
+        pass
+    return JsonResponse(debug_info, safe=False)
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.utils import timezone
