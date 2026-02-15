@@ -287,14 +287,18 @@ class TechnicalAnalysisService:
             # Convert price history to JSON format (last 180 days)
             price_history = []
             for index, row in df.tail(180).iterrows():
-                price_history.append({
-                    'date': index.strftime('%Y-%m-%d'),
-                    'open': float(row['Open']),
-                    'high': float(row['High']),
-                    'low': float(row['Low']),
-                    'close': float(row['Close']),
-                    'volume': int(row['Volume'])
-                })
+                try:
+                    price_history.append({
+                        'date': index.strftime('%Y-%m-%d'),
+                        'open': float(row['Open']) if pd.notna(row['Open']) else 0,
+                        'high': float(row['High']) if pd.notna(row['High']) else 0,
+                        'low': float(row['Low']) if pd.notna(row['Low']) else 0,
+                        'close': float(row['Close']) if pd.notna(row['Close']) else 0,
+                        'volume': int(row['Volume']) if pd.notna(row['Volume']) else 0
+                    })
+                except (ValueError, TypeError):
+                    # Skip invalid data points
+                    continue
             
             # Compile results
             result = {
@@ -322,10 +326,11 @@ class TechnicalAnalysisService:
                 'resistance_level_3': Decimal(str(sr_data['resistance_levels'][2])) if sr_data['resistance_levels'][2] else None,
                 
                 # Price history
-                'price_history': price_history
+                'price_history': price_history if price_history else []
             }
             
             return result
         except Exception as e:
             print(f"  ❌ Error calculating indicators for {ticker}: {str(e)}")
+            return None
             return None

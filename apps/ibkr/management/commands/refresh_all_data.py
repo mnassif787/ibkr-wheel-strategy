@@ -122,8 +122,20 @@ class Command(BaseCommand):
         self.stdout.write("=" * 60)
         self.stdout.write(self.style.SUCCESS("✅ Data Refresh Complete!"))
         self.stdout.write("=" * 60)
+        
+        # Show updated counts
+        from apps.ibkr.models import Stock, StockIndicator, Option
+        self.stdout.write(f"📊 Database Status:")
+        self.stdout.write(f"   • Stocks: {Stock.objects.count()}")
+        self.stdout.write(f"   • Indicators: {StockIndicator.objects.count()}")
+        self.stdout.write(f"   • Options: {Option.objects.count()}")
+        self.stdout.write("")
         self.stdout.write(f"⏱️  Total time: {elapsed_time:.2f} seconds")
         self.stdout.write(f"⏰ Finished: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS("💡 Your data is now fresh and up-to-date!"))
         self.stdout.write("")
+        
+        # Set completion status
+        cache.set('refresh_status', 'completed', timeout=300)
+        cache.set('refresh_completed_at', timezone.now().isoformat(), timeout=300)

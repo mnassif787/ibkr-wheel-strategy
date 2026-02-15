@@ -24,12 +24,12 @@ class Command(BaseCommand):
             tickers = [ticker.upper()]
             self.stdout.write(f"Refreshing data for {ticker.upper()}...")
         else:
-            # Refresh all watchlist tickers
-            tickers = list(Watchlist.objects.values_list('ticker', flat=True))
-            self.stdout.write(f"Refreshing data for {len(tickers)} tickers from watchlist...")
+            # Refresh ALL stocks in database (not just watchlist)
+            tickers = list(Stock.objects.values_list('ticker', flat=True))
+            self.stdout.write(f"Refreshing data for {len(tickers)} stocks in database...")
         
         if not tickers:
-            self.stdout.write(self.style.WARNING('No tickers found in watchlist'))
+            self.stdout.write(self.style.WARNING('No stocks found in database. Run "discover_stocks" first.'))
             return
         
         success_count = 0
