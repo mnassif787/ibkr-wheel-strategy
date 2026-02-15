@@ -2,11 +2,79 @@
 
 <div>
     <div class="mb-6">
-        <h2 class="text-2xl font-bold text-gray-900">📊 My Option Positions</h2>
-        <p class="text-gray-600 mt-1">Track your wheel strategy positions with real-time AI recommendations</p>
+        <h2 class="text-2xl font-bold text-gray-900">📊 My Positions</h2>
+        <p class="text-gray-600 mt-1">Track your stock holdings and option positions with real-time data from IBKR</p>
     </div>
 
-    <!-- Open Positions -->
+    <!-- Stock Positions -->
+    {% if stock_positions %}
+    <div class="mb-8">
+        <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-4 mb-4">
+            <h3 class="text-xl font-bold text-gray-900">📈 Stock Holdings ({{ stock_positions|length }})</h3>
+            <p class="text-sm text-gray-600 mt-1">Shares owned in your IBKR account</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {% for position in stock_positions %}
+            <div class="bg-white rounded-lg shadow-md border-2 border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
+                <div class="p-6">
+                    <div class="flex items-start justify-between mb-4">
+                        <div>
+                            <h4 class="text-2xl font-bold text-gray-900">
+                                {{ position.stock.ticker }}
+                            </h4>
+                            <p class="text-sm text-gray-600 mt-1">
+                                {{ position.stock.name|default:"Stock Position" }}
+                            </p>
+                        </div>
+                        <span class="px-3 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800">
+                            STOCK
+                        </span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div class="bg-blue-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-600">Shares Held</p>
+                            <p class="text-lg font-bold text-blue-700">{{ position.quantity }}</p>
+                            <p class="text-xs text-gray-500">Avg Cost: ${{ position.avg_cost|floatformat:2 }}</p>
+                        </div>
+                        <div class="bg-green-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-600">Market Value</p>
+                            <p class="text-lg font-bold text-green-700">${{ position.market_value|floatformat:2 }}</p>
+                            <p class="text-xs text-gray-500">Price: ${{ position.current_price|floatformat:2 }}</p>
+                        </div>
+                        <div class="{% if position.unrealized_pnl > 0 %}bg-green-50{% else %}bg-red-50{% endif %} rounded-lg p-3">
+                            <p class="text-xs text-gray-600">Unrealized P/L</p>
+                            <p class="text-lg font-bold {% if position.unrealized_pnl > 0 %}text-green-700{% else %}text-red-700{% endif %}">
+                                ${{ position.unrealized_pnl|floatformat:2 }}
+                            </p>
+                            <p class="text-xs text-gray-500">{{ position.unrealized_pnl_pct|floatformat:1 }}%</p>
+                        </div>
+                        <div class="bg-purple-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-600">Total Cost Basis</p>
+                            <p class="text-lg font-bold text-purple-700">${{ position.avg_cost|mul:position.quantity|floatformat:2 }}</p>
+                            <p class="text-xs text-gray-500">Last sync: {{ position.last_synced|timesince }} ago</p>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-2 mt-4">
+                        <a href="{% url 'ibkr:stock_detail' position.stock.ticker %}" 
+                           class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-center text-sm font-medium">
+                            📊 View Details
+                        </a>
+                        <a href="{% url 'ibkr:hub' %}?ticker={{ position.stock.ticker }}#options" 
+                           class="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-center text-sm font-medium">
+                            💰 Sell Covered Call
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Option Positions -->
     <div class="mb-8">
         <div class="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-300 rounded-lg p-4 mb-4">
             <h3 class="text-xl font-bold text-gray-900">🟢 Open Positions ({{ open_positions|length }})</h3>

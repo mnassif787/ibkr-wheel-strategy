@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Stock, Option, Signal, Watchlist, UserConfig, StockIndicator, Position
+from .models import Stock, Option, Signal, Watchlist, UserConfig, StockIndicator, Position, StockPosition
 
 
 @admin.register(Stock)
@@ -112,3 +112,15 @@ class PositionAdmin(admin.ModelAdmin):
             return f"{obj.unrealized_pl_pct:.2f}%"
         return "--"
     unrealized_pl_pct.short_description = 'P/L %'
+
+
+@admin.register(StockPosition)
+class StockPositionAdmin(admin.ModelAdmin):
+    list_display = ['stock', 'quantity', 'avg_cost', 'market_value', 'unrealized_pnl', 'unrealized_pnl_pct_display', 'last_synced']
+    list_filter = ['last_synced']
+    search_fields = ['stock__ticker', 'stock__name']
+    readonly_fields = ['last_synced', 'unrealized_pnl_pct', 'current_price']
+    
+    def unrealized_pnl_pct_display(self, obj):
+        return f"{obj.unrealized_pnl_pct:.2f}%"
+    unrealized_pnl_pct_display.short_description = 'P/L %'

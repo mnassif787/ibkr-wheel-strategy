@@ -553,3 +553,35 @@ class Alert(models.Model):
         # Will implement in next step
         pass
 
+
+class StockPosition(models.Model):
+    """Track actual stock holdings synced from IBKR portfolio"""
+    stock = models.ForeignKey(Stock, on_delete=models.CASCADE, related_name='holdings')
+    quantity = models.IntegerField(help_text='Number of shares held')
+    avg_cost = models.DecimalField(max_digits=10, decimal_places=2, help_text='Average cost per share')
+    market_value = models.DecimalField(max_digits=12, decimal_places=2, help_text='Current market value')
+    unrealized_pnl = models.DecimalField(max_digits=12, decimal_places=2, help_text='Unrealized profit/loss')
+    last_synced = models.DateTimeField(default=timezone.now, help_text='Last sync from IBKR')
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-market_value']
+        verbose_name = 'Stock Position'
+        verbose_name_plural = 'Stock Positions'
+    
+    def __str__(self):
+        return f"{self.stock.ticker}: {self.quantity} shares @ ${self.avg_cost}"
+    
+    @property
+    def unrealized_pnl_pct(self):
+        """Unrealized P/L percentage"""
+        total_cost = float(self.avg_cost) * self.quantity
+        if total_cost > 0:
+            return (float(self.unrealized_pnl) / total_cost) * 100
+        return 0
+    
+    @property
+    def current_price(self):
+        """Current stock price"""
+        return self.stock.last_price if self.stock.last_price else self.avg_cost
+

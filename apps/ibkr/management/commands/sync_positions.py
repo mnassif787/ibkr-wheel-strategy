@@ -61,6 +61,20 @@ class Command(BaseCommand):
                     if not dry_run:
                         # Get or create stock
                         stock, _ = Stock.objects.get_or_create(ticker=pos['symbol'])
+                        
+                        # Create or update stock position
+                        from apps.ibkr.models import StockPosition
+                        stock_pos, created = StockPosition.objects.update_or_create(
+                            stock=stock,
+                            defaults={
+                                'quantity': int(pos['position']),
+                                'avg_cost': Decimal(str(pos['avg_cost'])),
+                                'market_value': Decimal(str(pos['market_value'])),
+                                'unrealized_pnl': Decimal(str(pos['unrealized_pnl'])),
+                                'last_synced': timezone.now(),
+                            }
+                        )
+                        self.stdout.write(self.style.SUCCESS(f"  ✅ {'Created' if created else 'Updated'} stock position"))
                         stocks_synced += 1
             
             # Sync option positions

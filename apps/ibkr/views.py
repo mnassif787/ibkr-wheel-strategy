@@ -52,7 +52,7 @@ from decimal import Decimal
 import csv
 import json
 from datetime import datetime
-from .models import Stock, Option, Signal, Watchlist, UserConfig, OptionPosition, StockWheelScore, StockIndicator
+from .models import Stock, Option, Signal, Watchlist, UserConfig, OptionPosition, StockWheelScore, StockIndicator, StockPosition
 from .services.stock_data_fetcher import StockDataFetcher
 from .services.ai_analysis import AIAnalyzer
 from .services.ibkr_client import IBKRClient
@@ -149,6 +149,10 @@ def hub(request):
     last_updated = Stock.objects.filter(last_updated__isnull=False).order_by('-last_updated').values_list('last_updated', flat=True).first()
 
     # POSITIONS TAB DATA
+    # Stock positions
+    stock_positions = StockPosition.objects.select_related('stock').order_by('-market_value')
+    
+    # Option positions
     open_positions = OptionPosition.objects.filter(status='OPEN').select_related('stock').order_by('-entry_date')
     closed_positions = OptionPosition.objects.exclude(status='OPEN').select_related('stock').order_by('-exit_date')[:10]
 
@@ -291,6 +295,7 @@ def hub(request):
     context = {
         'last_updated': last_updated,
         # Positions
+        'stock_positions': stock_positions,
         'open_positions': open_positions,
         'closed_positions': closed_positions,
         # Stocks - two separate lists
