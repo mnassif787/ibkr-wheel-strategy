@@ -1,3 +1,4 @@
+import logging
 from django.views.decorators.csrf import csrf_exempt
 import logging
 @csrf_exempt
@@ -60,6 +61,7 @@ from .services.position_analyzer import PositionAnalyzer
 
 
 def hub(request):
+        logger = logging.getLogger(__name__)
     """Main hub with tabs for positions, discovery (stocks/options/signals)"""
     # Auto-populate stocks if database is empty
     if Stock.objects.count() == 0:
