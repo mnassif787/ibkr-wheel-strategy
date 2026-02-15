@@ -5,6 +5,11 @@
 
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <!-- Quick Access Links -->
+    <div class="mb-4 flex space-x-4">
+        <a href="{{ ibkr_debug_url }}" class="px-4 py-2 bg-red-100 text-red-700 rounded-lg border border-red-300 font-semibold hover:bg-red-200">🐞 IBKR Debug</a>
+        <a href="{{ vnc_url }}" class="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg border border-purple-300 font-semibold hover:bg-purple-200">🖥️ VNC Viewer</a>
+    </div>
     <!-- Live Data Status Bar -->
     <div class="bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-300 rounded-lg p-4 mb-4 shadow-sm">
         <div class="flex items-center justify-between">

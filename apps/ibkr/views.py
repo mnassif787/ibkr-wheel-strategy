@@ -176,6 +176,9 @@ def hub(request):
         'signals': signals,
     }
     
+    # Add debug and VNC links to context
+    context['ibkr_debug_url'] = '/ibkr/api/ibkr/debug/'
+    context['vnc_url'] = '/ibkr/vnc/'
     return render(request, 'ibkr/hub.html', context)
 
 
