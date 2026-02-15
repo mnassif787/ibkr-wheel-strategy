@@ -60,6 +60,18 @@ from .services.position_analyzer import PositionAnalyzer
 
 
 def hub(request):
+        # Handle manual stock add form
+        if request.method == 'POST' and 'manual_add_ticker' in request.POST:
+            ticker = request.POST.get('manual_add_ticker', '').upper().strip()
+            if ticker:
+                if not Watchlist.objects.filter(ticker=ticker).exists():
+                    Watchlist.objects.create(ticker=ticker)
+                    messages.success(request, f'{ticker} added to watchlist.')
+                else:
+                    messages.info(request, f'{ticker} is already in the watchlist.')
+            else:
+                messages.warning(request, 'Please enter a ticker symbol.')
+            return redirect('ibkr:hub')
     """Main hub with tabs for positions, discovery (stocks/options/signals)"""
     # Get all data for all tabs
     # Get last updated time from any stock
