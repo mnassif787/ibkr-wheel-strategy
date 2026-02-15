@@ -190,9 +190,17 @@ def hub(request):
         position.analysis = PositionAnalyzer.analyze_position(position)
     
     # STOCKS TAB DATA
-    stocks = Stock.objects.select_related('indicators').prefetch_related('options').all()
+    # Get watchlist tickers for "My Stocks" tab
+    watchlist_tickers = set(Watchlist.objects.values_list('ticker', flat=True))
+    
+    # Get all stocks
+    all_stocks = Stock.objects.select_related('indicators').prefetch_related('options').all()
+    
+    # Calculate scores for all stocks
     stock_scores = []
-    for stock in stocks:
+    preferred_stock_scores = []
+    
+    for stock in all_stocks:
         score_data = calculate_wheel_score(stock)
         stock.wheel_score = score_data['total_score']
         stock.score_breakdown = score_data
@@ -203,28 +211,37 @@ def hub(request):
         stock.entry_score = entry_signal['score']
         stock.entry_color = entry_signal['signal_color']
         
+        # Add to appropriate list
+        stock.in_watchlist = stock.ticker in watchlist_tickers
         stock_scores.append(stock)
+        if stock.ticker in watchlist_tickers:
+            preferred_stock_scores.append(stock)
     
-    # Apply stock filters if provided
+    # Apply stock filters if provided (for discovery tab)
     grade_filter = request.GET.get('grade', 'all')
     price_range = request.GET.get('price_range', 'all')
     
+    # Create filtered list for discovery
+    discovery_stocks = stock_scores.copy()
+    
     if grade_filter != 'all':
-        stock_scores = [s for s in stock_scores if s.score_breakdown['grade'] == grade_filter]
+        discovery_stocks = [s for s in discovery_stocks if s.score_breakdown['grade'] == grade_filter]
     
     if price_range == 'sweet_spot':
-        stock_scores = [s for s in stock_scores if s.last_price and 10 <= float(s.last_price) <= 50]
+        discovery_stocks = [s for s in discovery_stocks if s.last_price and 10 <= float(s.last_price) <= 50]
     elif price_range == 'under_50':
-        stock_scores = [s for s in stock_scores if s.last_price and float(s.last_price) < 50]
+        discovery_stocks = [s for s in discovery_stocks if s.last_price and float(s.last_price) < 50]
     elif price_range == 'over_100':
-        stock_scores = [s for s in stock_scores if s.last_price and float(s.last_price) > 100]
+        discovery_stocks = [s for s in discovery_stocks if s.last_price and float(s.last_price) > 100]
     
     # Sort stocks
     sort_by = request.GET.get('sort', 'wheel_score')
     if sort_by == 'wheel_score':
-        stock_scores.sort(key=lambda x: x.wheel_score, reverse=True)
+        discovery_stocks.sort(key=lambda x: x.wheel_score, reverse=True)
+        preferred_stock_scores.sort(key=lambda x: x.wheel_score, reverse=True)
     elif sort_by == 'price':
-        stock_scores.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
+        discovery_stocks.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
+        preferred_stock_scores.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
     
     # OPTIONS TAB DATA
     selected_ticker = request.GET.get('ticker', '')
@@ -245,11 +262,13 @@ def hub(request):
         # Positions
         'open_positions': open_positions,
         'closed_positions': closed_positions,
-        # Stocks
-        'stocks': stock_scores,
+        # Stocks - two separate lists
+        'preferred_stocks': preferred_stock_scores,  # For "My Stocks" tab
+        'stocks': discovery_stocks,  # For "Discovery" tab
         'sort_by': sort_by,
         'grade_filter': grade_filter,
         'price_range': price_range,
+        'watchlist_tickers': watchlist_tickers,  # For checking if stock is in watchlist
         # Options
         'selected_ticker': selected_ticker,
         'selected_stock': selected_stock,
@@ -2234,3 +2253,114 @@ def vnc_viewer(request):
     return render(request, 'ibkr/vnc.html', {
         'page_title': 'IB Gateway VNC',
     })
+
+
+def add_to_watchlist(request):
+    """Add a stock to the user's preferred watchlist"""
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            ticker = data.get('ticker', '').upper().strip()
+            
+            if not ticker:
+                return JsonResponse({'success': False, 'error': 'Ticker is required'}, status=400)
+            
+            # Add to watchlist
+            watchlist_item, created = Watchlist.objects.get_or_create(ticker=ticker)
+            
+            if created:
+                # If the stock doesn't exist, fetch its data
+                if not Stock.objects.filter(ticker=ticker).exists():
+                    try:
+                        stock_data = StockDataFetcher.fetch_stock_data(ticker)
+                        if stock_data:
+                            stock, _ = Stock.objects.update_or_create(
+                                ticker=ticker,
+                                defaults={
+                                    'name': stock_data.get('name', ''),
+                                    'last_price': stock_data.get('last_price'),
+                                    'market_cap': stock_data.get('market_cap'),
+                                    'beta': stock_data.get('beta'),
+                                    'roe': stock_data.get('roe'),
+                                    'free_cash_flow': stock_data.get('free_cash_flow'),
+                                    'sector': stock_data.get('sector', ''),
+                                    'industry': stock_data.get('industry', ''),
+                                    'pe_ratio': stock_data.get('pe_ratio'),
+                                    'forward_pe': stock_data.get('forward_pe'),
+                                    'dividend_yield': stock_data.get('dividend_yield'),
+                                    'fifty_two_week_high': stock_data.get('fifty_two_week_high'),
+                                    'fifty_two_week_low': stock_data.get('fifty_two_week_low'),
+                                    'avg_volume': stock_data.get('avg_volume'),
+                                    'last_updated': stock_data.get('last_updated'),
+                                }
+                            )
+                            
+                            # Calculate technical indicators
+                            try:
+                                indicators_data = TechnicalAnalysisService.calculate_all_indicators(ticker)
+                                if indicators_data:
+                                    StockIndicator.objects.update_or_create(
+                                        stock=stock,
+                                        defaults={
+                                            'rsi': indicators_data.get('rsi'),
+                                            'rsi_signal': indicators_data.get('rsi_signal', 'NEUTRAL'),
+                                            'ema_50': indicators_data.get('ema_50'),
+                                            'ema_200': indicators_data.get('ema_200'),
+                                            'ema_trend': indicators_data.get('ema_trend', 'NEUTRAL'),
+                                            'bb_upper': indicators_data.get('bb_upper'),
+                                            'bb_middle': indicators_data.get('bb_middle'),
+                                            'bb_lower': indicators_data.get('bb_lower'),
+                                            'bb_position': indicators_data.get('bb_position', ''),
+                                            'support_level_1': indicators_data.get('support_level_1'),
+                                            'support_level_2': indicators_data.get('support_level_2'),
+                                            'support_level_3': indicators_data.get('support_level_3'),
+                                            'resistance_level_1': indicators_data.get('resistance_level_1'),
+                                            'resistance_level_2': indicators_data.get('resistance_level_2'),
+                                            'resistance_level_3': indicators_data.get('resistance_level_3'),
+                                            'price_history': indicators_data.get('price_history', []),
+                                            'last_calculated': timezone.now(),
+                                        }
+                                    )
+                            except Exception as e:
+                                logger.error(f"Error calculating indicators for {ticker}: {e}")
+                    except Exception as e:
+                        logger.error(f"Error fetching data for {ticker}: {e}")
+                
+                return JsonResponse({'success': True, 'message': f'{ticker} added to your watchlist!'})
+            else:
+                return JsonResponse({'success': True, 'message': f'{ticker} is already in your watchlist.'})
+        
+        except json.JSONDecodeError:
+            return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+        except Exception as e:
+            logger.error(f"Error adding to watchlist: {e}")
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    
+    return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
+
+
+def remove_from_watchlist(request):
+    """Remove a stock from the user's preferred watchlist"""
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            ticker = data.get('ticker', '').upper().strip()
+            
+            if not ticker:
+                return JsonResponse({'success': False, 'error': 'Ticker is required'}, status=400)
+            
+            # Remove from watchlist
+            deleted_count, _ = Watchlist.objects.filter(ticker=ticker).delete()
+            
+            if deleted_count > 0:
+                return JsonResponse({'success': True, 'message': f'{ticker} removed from your watchlist.'})
+            else:
+                return JsonResponse({'success': False, 'error': f'{ticker} was not in your watchlist.'}, status=404)
+        
+        except json.JSONDecodeError:
+            return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+        except Exception as e:
+            logger.error(f"Error removing from watchlist: {e}")
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+    
+    return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)

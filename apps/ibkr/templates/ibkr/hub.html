@@ -95,9 +95,13 @@
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
         <div class="border-b border-gray-200">
             <nav class="flex -mb-px" aria-label="Tabs">
-                <button onclick="switchTab('positions')" id="tab-positions" class="tab-button active group relative min-w-0 flex-1 overflow-hidden bg-white py-4 px-4 text-sm font-medium text-center hover:bg-gray-50 focus:z-10">
-                    <span class="text-lg">📊 My Positions</span>
+                <button onclick="switchTab('mystocks')" id="tab-mystocks" class="tab-button active group relative min-w-0 flex-1 overflow-hidden bg-white py-4 px-4 text-sm font-medium text-center hover:bg-gray-50 focus:z-10">
+                    <span class="text-lg">⭐ My Stocks</span>
                     <span aria-hidden="true" class="tab-indicator bg-blue-500 absolute inset-x-0 bottom-0 h-1"></span>
+                </button>
+                <button onclick="switchTab('positions')" id="tab-positions" class="tab-button group relative min-w-0 flex-1 overflow-hidden bg-white py-4 px-4 text-sm font-medium text-center hover:bg-gray-50 focus:z-10">
+                    <span class="text-lg">📊 My Positions</span>
+                    <span aria-hidden="true" class="tab-indicator bg-blue-500 absolute inset-x-0 bottom-0 h-0"></span>
                 </button>
                 <button onclick="switchTab('discovery')" id="tab-discovery" class="tab-button group relative min-w-0 flex-1 overflow-hidden bg-white py-4 px-4 text-sm font-medium text-center hover:bg-gray-50 focus:z-10">
                     <span class="text-lg">🔍 Discovery</span>
@@ -107,8 +111,13 @@
         </div>
     </div>
 
+    <!-- Tab Content: My Stocks -->
+    <div id="content-mystocks" class="tab-content">
+        {% include 'ibkr/tabs/my_stocks_tab.html' %}
+    </div>
+
     <!-- Tab Content: My Positions -->
-    <div id="content-positions" class="tab-content">
+    <div id="content-positions" class="tab-content hidden">
         {% include 'ibkr/tabs/positions_tab.html' %}
     </div>
 
@@ -275,5 +284,144 @@ document.head.insertAdjacentHTML('beforeend', `
 }
 </style>
 `);
+
+// Watchlist Management Functions
+async function addToWatchlist(ticker) {
+    try {
+        const response = await fetch('/ibkr/api/watchlist/add/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ ticker: ticker })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Show success message
+            showNotification(data.message, 'success');
+            
+            // Update button state
+            const row = document.querySelector(`tr[data-ticker="${ticker}"]`);
+            if (row) {
+                const actionCell = row.querySelector('td:last-child');
+                const addButton = actionCell.querySelector('button[onclick*="addToWatchlist"]');
+                if (addButton) {
+                    addButton.outerHTML = `
+                        <button onclick="removeFromWatchlist('${ticker}')" class="px-2 py-1 bg-gray-400 text-white rounded text-xs font-semibold hover:bg-gray-500" title="Already in watchlist">
+                            ⭐ Saved
+                        </button>
+                    `;
+                }
+            }
+        } else {
+            showNotification(data.error || 'Failed to add to watchlist', 'error');
+        }
+    } catch (error) {
+        console.error('Error adding to watchlist:', error);
+        showNotification('Failed to add to watchlist', 'error');
+    }
+}
+
+async function removeFromWatchlist(ticker) {
+    if (!confirm(`Remove ${ticker} from your watchlist?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/ibkr/api/watchlist/remove/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ ticker: ticker })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(data.message, 'success');
+            
+            // Check which tab we're on
+            const activeTab = localStorage.getItem('activeTab');
+            
+            if (activeTab === 'mystocks') {
+                // If on My Stocks tab, remove the row
+                const row = document.querySelector(`tr[data-ticker="${ticker}"]`);
+                if (row) {
+                    row.style.transition = 'opacity 0.3s';
+                    row.style.opacity = '0';
+                    setTimeout(() => {
+                        row.remove();
+                        
+                        // Check if there are any stocks left
+                        const tbody = document.querySelector('tbody');
+                        if (!tbody || tbody.children.length === 0) {
+                            // Reload to show empty state
+                            window.location.reload();
+                        }
+                    }, 300);
+                }
+            } else {
+                // If on Discovery tab, update button state
+                const row = document.querySelector(`tr[data-ticker="${ticker}"]`);
+                if (row) {
+                    const actionCell = row.querySelector('td:last-child');
+                    const removeButton = actionCell.querySelector('button[onclick*="removeFromWatchlist"]');
+                    if (removeButton) {
+                        removeButton.outerHTML = `
+                            <button onclick="addToWatchlist('${ticker}')" class="px-2 py-1 bg-green-600 text-white rounded text-xs font-semibold hover:bg-green-700">
+                                + Add
+                            </button>
+                        `;
+                    }
+                }
+            }
+        } else {
+            showNotification(data.error || 'Failed to remove from watchlist', 'error');
+        }
+    } catch (error) {
+        console.error('Error removing from watchlist:', error);
+        showNotification('Failed to remove from watchlist', 'error');
+    }
+}
+
+// Helper function to get CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Notification function
+function showNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ${
+        type === 'success' ? 'bg-green-500 text-white' :
+        type === 'error' ? 'bg-red-500 text-white' :
+        'bg-blue-500 text-white'
+    }`;
+    notification.textContent = message;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.transition = 'opacity 0.3s';
+        notification.style.opacity = '0';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
 </script>
 {% endblock %}

@@ -22,6 +22,9 @@ urlpatterns = [
     path('watchlist/add/', views.watchlist_add, name='watchlist_add'),
     path('watchlist/remove/<str:ticker>/', views.watchlist_remove, name='watchlist_remove'),
     path('watchlist/refresh/', views.refresh_watchlist_data, name='watchlist_refresh'),
+    # New JSON API endpoints for watchlist
+    path('api/watchlist/add/', views.add_to_watchlist, name='api_watchlist_add'),
+    path('api/watchlist/remove/', views.remove_from_watchlist, name='api_watchlist_remove'),
     path('options/sync/yfinance/', views.sync_yfinance_options_view, name='sync_yfinance_options'),
     path('positions/', views.positions_list, name='positions'),
     path('positions/open/', views.open_position, name='open_position'),
