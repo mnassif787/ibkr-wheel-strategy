@@ -10,56 +10,89 @@
 
     <!-- Filters -->
     <div class="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-        <form method="get" action="{% url 'ibkr:hub' %}" class="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <form method="get" action="{% url 'ibkr:hub' %}" class="space-y-4">
             <input type="hidden" name="tab" value="discovery">
             <input type="hidden" name="subtab" value="stocks">
             
-            <div>
-                <label class="block text-xs font-semibold text-gray-700 mb-1">Sort By</label>
-                <select name="sort" class="w-full px-2 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
-                    <option value="wheel_score" {% if sort_by == 'wheel_score' %}selected{% endif %}>🎯 Wheel Score</option>
-                    <option value="price" {% if sort_by == 'price' %}selected{% endif %}>💰 Price</option>
-                </select>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Sort By -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 mb-2">Sort By</label>
+                    <select name="sort" class="w-full px-2 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
+                        <option value="wheel_score" {% if sort_by == 'wheel_score' %}selected{% endif %}>🎯 Wheel Score</option>
+                        <option value="price" {% if sort_by == 'price' %}selected{% endif %}>💰 Price</option>
+                    </select>
+                </div>
+                
+                <!-- Grade Filter (Multi-select) -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 mb-2">Grade Filter (Select Multiple)</label>
+                    <div class="bg-gray-50 border border-gray-300 rounded-lg p-2 space-y-1.5">
+                        <label class="flex items-center cursor-pointer hover:bg-white px-2 py-1 rounded">
+                            <input type="checkbox" name="grade" value="A" {% if 'A' in grade_filters %}checked{% endif %} class="mr-2 text-purple-600 focus:ring-purple-500">
+                            <span class="text-sm">A - Excellent (80+)</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer hover:bg-white px-2 py-1 rounded">
+                            <input type="checkbox" name="grade" value="B" {% if 'B' in grade_filters %}checked{% endif %} class="mr-2 text-purple-600 focus:ring-purple-500">
+                            <span class="text-sm">B - Good (65+)</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer hover:bg-white px-2 py-1 rounded">
+                            <input type="checkbox" name="grade" value="C" {% if 'C' in grade_filters %}checked{% endif %} class="mr-2 text-purple-600 focus:ring-purple-500">
+                            <span class="text-sm">C - Fair (50+)</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Price Range Filter (Multi-select) -->
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 mb-2">Price Range (Select Multiple)</label>
+                    <div class="bg-gray-50 border border-gray-300 rounded-lg p-2 space-y-1.5">
+                        <label class="flex items-center cursor-pointer hover:bg-white px-2 py-1 rounded">
+                            <input type="checkbox" name="price_range" value="sweet_spot" {% if 'sweet_spot' in price_ranges %}checked{% endif %} class="mr-2 text-purple-600 focus:ring-purple-500">
+                            <span class="text-sm">$10-$50 (Sweet Spot)</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer hover:bg-white px-2 py-1 rounded">
+                            <input type="checkbox" name="price_range" value="under_50" {% if 'under_50' in price_ranges %}checked{% endif %} class="mr-2 text-purple-600 focus:ring-purple-500">
+                            <span class="text-sm">Under $50</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer hover:bg-white px-2 py-1 rounded">
+                            <input type="checkbox" name="price_range" value="over_100" {% if 'over_100' in price_ranges %}checked{% endif %} class="mr-2 text-purple-600 focus:ring-purple-500">
+                            <span class="text-sm">Over $100</span>
+                        </label>
+                    </div>
+                </div>
             </div>
             
-            <div>
-                <label class="block text-xs font-semibold text-gray-700 mb-1">Grade Filter</label>
-                <select name="grade" class="w-full px-2 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
-                    <option value="all" {% if grade_filter == 'all' %}selected{% endif %}>All Grades</option>
-                    <option value="A" {% if grade_filter == 'A' %}selected{% endif %}>A - Excellent (80+)</option>
-                    <option value="B" {% if grade_filter == 'B' %}selected{% endif %}>B - Good (65+)</option>
-                    <option value="C" {% if grade_filter == 'C' %}selected{% endif %}>C - Fair (50+)</option>
-                </select>
-            </div>
-            
-            <div>
-                <label class="block text-xs font-semibold text-gray-700 mb-1">Price Range</label>
-                <select name="price_range" class="w-full px-2 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500">
-                    <option value="all" {% if price_range == 'all' %}selected{% endif %}>All Prices</option>
-                    <option value="sweet_spot" {% if price_range == 'sweet_spot' %}selected{% endif %}>$10-$50 (Sweet Spot)</option>
-                    <option value="under_50" {% if price_range == 'under_50' %}selected{% endif %}>Under $50</option>
-                    <option value="over_100" {% if price_range == 'over_100' %}selected{% endif %}>Over $100</option>
-                </select>
-            </div>
-            
-            <div class="flex items-end gap-2">
-                <button type="submit" class="flex-1 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-semibold text-sm">
-                    Filter
-                </button>
-                <a href="{% url 'ibkr:hub' %}?tab=discovery&subtab=stocks" class="px-3 py-2 bg-gray-400 text-white rounded-lg hover:bg-gray-500 font-semibold text-sm">
-                    Clear
+            <div class="flex justify-end gap-2">
+                <a href="{% url 'ibkr:hub' %}?tab=discovery&subtab=stocks" class="px-4 py-2 bg-gray-400 text-white rounded-lg hover:bg-gray-500 font-semibold text-sm">
+                    Clear Filters
                 </a>
+                <button type="submit" class="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-semibold text-sm">
+                    Apply Filters
+                </button>
             </div>
         </form>
     </div>
 
     <!-- Results Count -->
+    {% if filters_applied %}
     <div class="mb-3 text-sm text-gray-600">
-        Showing <strong>{{ stocks|length }}</strong> stocks
+        Showing <strong>{{ stocks|length }}</strong> stock{{ stocks|length|pluralize }} matching your criteria
     </div>
+    {% else %}
+    <div class="mb-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-center gap-2">
+            <span class="text-2xl">🔍</span>
+            <div>
+                <p class="text-sm font-semibold text-blue-900">Select your filter criteria above to discover stocks</p>
+                <p class="text-xs text-blue-700">Choose one or more grades and price ranges to see matching stocks</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Stocks Table -->
-    {% if stocks %}
+    {% if stocks and filters_applied %}
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 relative">
         <div class="overflow-x-auto overflow-y-visible">
         <table class="min-w-full divide-y divide-gray-200">
@@ -204,11 +237,24 @@
         </table>
         </div>
     </div>
+    {% elif filters_applied %}
+    <div class="bg-white rounded-lg border border-gray-200 p-12 text-center">
+        <div class="text-5xl mb-4">🔍</div>
+        <h3 class="text-lg font-medium text-gray-900 mb-2">No Stocks Match Your Criteria</h3>
+        <p class="text-gray-500 mb-4">Try adjusting your filters to see more results</p>
+        <a href="{% url 'ibkr:hub' %}?tab=discovery&subtab=stocks" class="inline-block px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-semibold text-sm">
+            Clear Filters
+        </a>
+    </div>
     {% else %}
     <div class="bg-white rounded-lg border border-gray-200 p-12 text-center">
-        <div class="text-5xl mb-4">📊</div>
-        <h3 class="text-lg font-medium text-gray-900 mb-2">No Stocks Found</h3>
-        <p class="text-gray-500">Try adjusting your filters or add more stocks to the database</p>
+        <div class="text-5xl mb-4">🎯</div>
+        <h3 class="text-lg font-medium text-gray-900 mb-2">Ready to Discover Stocks?</h3>
+        <p class="text-gray-500 mb-4">Select your preferred grade and price range criteria above to find the best wheel strategy candidates</p>
+        <div class="flex justify-center gap-2 text-sm text-gray-600">
+            <span>💡 Tip:</span>
+            <span>Select multiple grades and price ranges to broaden your search</span>
+        </div>
     </div>
     {% endif %}
 </div>

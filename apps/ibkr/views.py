@@ -218,21 +218,42 @@ def hub(request):
             preferred_stock_scores.append(stock)
     
     # Apply stock filters if provided (for discovery tab)
-    grade_filter = request.GET.get('grade', 'all')
-    price_range = request.GET.get('price_range', 'all')
+    # Get multi-select filter values
+    grade_filters = request.GET.getlist('grade')  # Multi-select grades
+    price_ranges = request.GET.getlist('price_range')  # Multi-select price ranges
     
-    # Create filtered list for discovery
-    discovery_stocks = stock_scores.copy()
+    # Only show stocks in discovery if filters are applied
+    discovery_stocks = []
+    filters_applied = bool(grade_filters or price_ranges)
     
-    if grade_filter != 'all':
-        discovery_stocks = [s for s in discovery_stocks if s.score_breakdown['grade'] == grade_filter]
-    
-    if price_range == 'sweet_spot':
-        discovery_stocks = [s for s in discovery_stocks if s.last_price and 10 <= float(s.last_price) <= 50]
-    elif price_range == 'under_50':
-        discovery_stocks = [s for s in discovery_stocks if s.last_price and float(s.last_price) < 50]
-    elif price_range == 'over_100':
-        discovery_stocks = [s for s in discovery_stocks if s.last_price and float(s.last_price) > 100]
+    if filters_applied:
+        # Start with all stocks
+        discovery_stocks = stock_scores.copy()
+        
+        # Apply grade filters (OR logic - show if matches any selected grade)
+        if grade_filters:
+            discovery_stocks = [s for s in discovery_stocks if s.score_breakdown['grade'] in grade_filters]
+        
+        # Apply price range filters (OR logic - show if matches any selected range)
+        if price_ranges:
+            filtered_by_price = []
+            for stock in discovery_stocks:
+                if not stock.last_price:
+                    continue
+                price = float(stock.last_price)
+                
+                # Check if stock matches any selected price range
+                for price_range in price_ranges:
+                    if price_range == 'sweet_spot' and 10 <= price <= 50:
+                        filtered_by_price.append(stock)
+                        break
+                    elif price_range == 'under_50' and price < 50:
+                        filtered_by_price.append(stock)
+                        break
+                    elif price_range == 'over_100' and price > 100:
+                        filtered_by_price.append(stock)
+                        break
+            discovery_stocks = filtered_by_price
     
     # Sort stocks
     sort_by = request.GET.get('sort', 'wheel_score')
@@ -266,8 +287,9 @@ def hub(request):
         'preferred_stocks': preferred_stock_scores,  # For "My Stocks" tab
         'stocks': discovery_stocks,  # For "Discovery" tab
         'sort_by': sort_by,
-        'grade_filter': grade_filter,
-        'price_range': price_range,
+        'grade_filters': grade_filters,  # Multi-select grades
+        'price_ranges': price_ranges,  # Multi-select price ranges
+        'filters_applied': filters_applied,  # Whether any filters are applied
         'watchlist_tickers': watchlist_tickers,  # For checking if stock is in watchlist
         # Options
         'selected_ticker': selected_ticker,
