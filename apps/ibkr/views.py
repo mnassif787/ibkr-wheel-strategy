@@ -193,14 +193,16 @@ def hub(request):
     # Get watchlist tickers for "My Stocks" tab
     watchlist_tickers = set(Watchlist.objects.values_list('ticker', flat=True))
     
-    # Get all stocks
-    all_stocks = Stock.objects.select_related('indicators').prefetch_related('options').all()
+    # Check if discovery filters are applied
+    grade_filters = request.GET.getlist('grade')  # Multi-select grades
+    price_ranges = request.GET.getlist('price_range')  # Multi-select price ranges
+    filters_applied = bool(grade_filters or price_ranges)
     
-    # Calculate scores for all stocks
-    stock_scores = []
+    # Always process preferred stocks (My Stocks tab)
+    preferred_stocks_query = Stock.objects.filter(ticker__in=watchlist_tickers).select_related('indicators').prefetch_related('options')
     preferred_stock_scores = []
     
-    for stock in all_stocks:
+    for stock in preferred_stocks_query:
         score_data = calculate_wheel_score(stock)
         stock.wheel_score = score_data['total_score']
         stock.score_breakdown = score_data
@@ -210,25 +212,31 @@ def hub(request):
         stock.entry_quality = entry_signal['quality']
         stock.entry_score = entry_signal['score']
         stock.entry_color = entry_signal['signal_color']
+        stock.in_watchlist = True
         
-        # Add to appropriate list
-        stock.in_watchlist = stock.ticker in watchlist_tickers
-        stock_scores.append(stock)
-        if stock.ticker in watchlist_tickers:
-            preferred_stock_scores.append(stock)
+        preferred_stock_scores.append(stock)
     
-    # Apply stock filters if provided (for discovery tab)
-    # Get multi-select filter values
-    grade_filters = request.GET.getlist('grade')  # Multi-select grades
-    price_ranges = request.GET.getlist('price_range')  # Multi-select price ranges
-    
-    # Only show stocks in discovery if filters are applied
+    # Only process discovery stocks if filters are applied
     discovery_stocks = []
-    filters_applied = bool(grade_filters or price_ranges)
     
     if filters_applied:
-        # Start with all stocks
-        discovery_stocks = stock_scores.copy()
+        # Fetch all stocks only when filters are applied
+        all_stocks = Stock.objects.select_related('indicators').prefetch_related('options').all()
+        
+        # Calculate scores for all stocks
+        for stock in all_stocks:
+            score_data = calculate_wheel_score(stock)
+            stock.wheel_score = score_data['total_score']
+            stock.score_breakdown = score_data
+            
+            entry_signal = calculate_entry_signal(stock)
+            stock.entry_signal = entry_signal['signal']
+            stock.entry_quality = entry_signal['quality']
+            stock.entry_score = entry_signal['score']
+            stock.entry_color = entry_signal['signal_color']
+            stock.in_watchlist = stock.ticker in watchlist_tickers
+            
+            discovery_stocks.append(stock)
         
         # Apply grade filters (OR logic - show if matches any selected grade)
         if grade_filters:
@@ -257,12 +265,19 @@ def hub(request):
     
     # Sort stocks
     sort_by = request.GET.get('sort', 'wheel_score')
+    
+    # Sort preferred stocks (always available)
     if sort_by == 'wheel_score':
-        discovery_stocks.sort(key=lambda x: x.wheel_score, reverse=True)
         preferred_stock_scores.sort(key=lambda x: x.wheel_score, reverse=True)
     elif sort_by == 'price':
-        discovery_stocks.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
         preferred_stock_scores.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
+    
+    # Sort discovery stocks (only if filters were applied and we have results)
+    if discovery_stocks:
+        if sort_by == 'wheel_score':
+            discovery_stocks.sort(key=lambda x: x.wheel_score, reverse=True)
+        elif sort_by == 'price':
+            discovery_stocks.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
     
     # OPTIONS TAB DATA
     selected_ticker = request.GET.get('ticker', '')
