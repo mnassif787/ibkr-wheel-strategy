@@ -58,6 +58,9 @@ from .services.ai_analysis import AIAnalyzer
 from .services.ibkr_client import IBKRClient
 from .services.position_analyzer import PositionAnalyzer
 
+# Initialize logger
+logger = logging.getLogger(__name__)
+
 
 def hub(request):
     # Handle manual stock add form
