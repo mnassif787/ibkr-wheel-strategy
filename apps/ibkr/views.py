@@ -193,10 +193,9 @@ def hub(request):
     # Get watchlist tickers for "My Stocks" tab
     watchlist_tickers = set(Watchlist.objects.values_list('ticker', flat=True))
     
-    # Check if discovery filters are applied
-    grade_filters = request.GET.getlist('grade')  # Multi-select grades
+    # Check if discovery filters are applied (only price range now)
     price_ranges = request.GET.getlist('price_range')  # Multi-select price ranges
-    filters_applied = bool(grade_filters or price_ranges)
+    filters_applied = bool(price_ranges)
     
     # Always process preferred stocks (My Stocks tab)
     preferred_stocks_query = Stock.objects.filter(ticker__in=watchlist_tickers).select_related('indicators').prefetch_related('options')
@@ -216,68 +215,64 @@ def hub(request):
         
         preferred_stock_scores.append(stock)
     
-    # Only process discovery stocks if filters are applied
+    # Only process discovery stocks if filters are applied (price range search)
     discovery_stocks = []
     
     if filters_applied:
-        # Fetch all stocks only when filters are applied
+        # Fetch all stocks when price range filters are applied
         all_stocks = Stock.objects.select_related('indicators').prefetch_related('options').all()
         
-        # Calculate scores for all stocks
+        # Filter stocks by price range only (basic info, no complex calculations yet)
         for stock in all_stocks:
-            score_data = calculate_wheel_score(stock)
-            stock.wheel_score = score_data['total_score']
-            stock.score_breakdown = score_data
+            if not stock.last_price:
+                continue
             
-            entry_signal = calculate_entry_signal(stock)
-            stock.entry_signal = entry_signal['signal']
-            stock.entry_quality = entry_signal['quality']
-            stock.entry_score = entry_signal['score']
-            stock.entry_color = entry_signal['signal_color']
-            stock.in_watchlist = stock.ticker in watchlist_tickers
+            price = float(stock.last_price)
+            price_matches = False
             
-            discovery_stocks.append(stock)
-        
-        # Apply grade filters (OR logic - show if matches any selected grade)
-        if grade_filters:
-            discovery_stocks = [s for s in discovery_stocks if s.score_breakdown['grade'] in grade_filters]
-        
-        # Apply price range filters (OR logic - show if matches any selected range)
-        if price_ranges:
-            filtered_by_price = []
-            for stock in discovery_stocks:
-                if not stock.last_price:
-                    continue
-                price = float(stock.last_price)
-                
-                # Check if stock matches any selected price range
-                for price_range in price_ranges:
-                    if price_range == 'sweet_spot' and 10 <= price <= 50:
-                        filtered_by_price.append(stock)
-                        break
-                    elif price_range == 'under_50' and price < 50:
-                        filtered_by_price.append(stock)
-                        break
-                    elif price_range == 'over_100' and price > 100:
-                        filtered_by_price.append(stock)
-                        break
-            discovery_stocks = filtered_by_price
+            # Check if stock matches any selected price range
+            for price_range in price_ranges:
+                if price_range == 'under_10' and price < 10:
+                    price_matches = True
+                    break
+                elif price_range == '10_to_30' and 10 <= price <= 30:
+                    price_matches = True
+                    break
+                elif price_range == '30_to_50' and 30 <= price <= 50:
+                    price_matches = True
+                    break
+                elif price_range == '50_to_100' and 50 <= price <= 100:
+                    price_matches = True
+                    break
+                elif price_range == 'over_100' and price > 100:
+                    price_matches = True
+                    break
+            
+            if price_matches:
+                # Add basic stock info without complex calculations
+                stock.in_watchlist = stock.ticker in watchlist_tickers
+                # Set placeholder values for display
+                stock.wheel_score = 0
+                stock.score_breakdown = {'grade': 'N/A', 'total_score': 0}
+                stock.entry_signal = 'N/A'
+                stock.entry_color = 'gray'
+                discovery_stocks.append(stock)
     
     # Sort stocks
-    sort_by = request.GET.get('sort', 'wheel_score')
+    sort_by = request.GET.get('sort', 'price')
     
     # Sort preferred stocks (always available)
-    if sort_by == 'wheel_score':
-        preferred_stock_scores.sort(key=lambda x: x.wheel_score, reverse=True)
-    elif sort_by == 'price':
+    if sort_by == 'price':
         preferred_stock_scores.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
+    elif sort_by == 'volume':
+        preferred_stock_scores.sort(key=lambda x: x.avg_volume if x.avg_volume else 0, reverse=True)
     
     # Sort discovery stocks (only if filters were applied and we have results)
     if discovery_stocks:
-        if sort_by == 'wheel_score':
-            discovery_stocks.sort(key=lambda x: x.wheel_score, reverse=True)
-        elif sort_by == 'price':
+        if sort_by == 'price':
             discovery_stocks.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
+        elif sort_by == 'volume':
+            discovery_stocks.sort(key=lambda x: x.avg_volume if x.avg_volume else 0, reverse=True)
     
     # OPTIONS TAB DATA
     selected_ticker = request.GET.get('ticker', '')
@@ -302,7 +297,6 @@ def hub(request):
         'preferred_stocks': preferred_stock_scores,  # For "My Stocks" tab
         'stocks': discovery_stocks,  # For "Discovery" tab
         'sort_by': sort_by,
-        'grade_filters': grade_filters,  # Multi-select grades
         'price_ranges': price_ranges,  # Multi-select price ranges
         'filters_applied': filters_applied,  # Whether any filters are applied
         'watchlist_tickers': watchlist_tickers,  # For checking if stock is in watchlist
