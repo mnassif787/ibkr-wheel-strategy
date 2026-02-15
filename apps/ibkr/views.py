@@ -61,6 +61,11 @@ from .services.position_analyzer import PositionAnalyzer
 
 def hub(request):
     """Main hub with tabs for positions, discovery (stocks/options/signals)"""
+    # Auto-populate stocks if database is empty
+    if Stock.objects.count() == 0:
+        from .services.stock_data_fetcher import StockDataFetcher
+        fetcher = StockDataFetcher()
+        fetcher.discover_stocks()
     # Get all data for all tabs
     # Get last updated time from any stock
     last_updated = Stock.objects.filter(last_updated__isnull=False).order_by('-last_updated').values_list('last_updated', flat=True).first()
