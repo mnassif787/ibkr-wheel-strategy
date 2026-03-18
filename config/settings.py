@@ -159,3 +159,32 @@ USE_X_FORWARDED_HOST = True
 # Leave empty to disable (local development)
 BASIC_AUTH_USER = config('BASIC_AUTH_USER', default='')
 BASIC_AUTH_PASS = config('BASIC_AUTH_PASS', default='')
+
+# Logging — quiet down ib_insync pre-login connection errors (expected during startup)
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        # ib_insync spams ERROR-level 'API connection failed' / 'Make sure API port is open'
+        # while IB Gateway is starting up or waiting for VNC login. Reduce to WARNING.
+        'ib_insync': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'ib_insync.client': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}

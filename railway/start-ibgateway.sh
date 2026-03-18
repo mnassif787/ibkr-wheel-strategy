@@ -37,6 +37,14 @@ echo "Gateway path: $GATEWAY_PATH"
 ls -la "$GATEWAY_PATH/jars/" 2>/dev/null | head -3 || echo "WARNING: No jars found"
 ls "$GATEWAY_PATH/"*.vmoptions 2>/dev/null || echo "WARNING: No vmoptions found"
 
+# Normalise env var names — Railway uses IBKR_TRADING_MODE, IBC template expects TRADING_MODE
+export TRADING_MODE=${TRADING_MODE:-${IBKR_TRADING_MODE:-paper}}
+export READ_ONLY_API=${READ_ONLY_API:-no}
+export TWS_USERID=${TWS_USERID:-${IBKR_USERNAME:-}}
+export TWS_PASSWORD=${TWS_PASSWORD:-${IBKR_PASSWORD:-}}
+
+echo "Trading mode: $TRADING_MODE | Read-only API: $READ_ONLY_API | Auto-login: ${TWS_USERID:+yes (user=$TWS_USERID)}${TWS_USERID:-no (manual VNC login required)}"
+
 # Template IBC config from environment variables
 # Only substitutes TRADING_MODE and READ_ONLY_API, leaves everything else intact
 if [ -f /root/ibc/config.ini.tmpl ]; then
