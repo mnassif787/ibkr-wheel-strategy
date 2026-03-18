@@ -1831,10 +1831,14 @@ def gateway_control(request):
     # Override with VNC_URL env var for Railway/cloud deployments.
     vnc_url = os.environ.get('VNC_URL', 'http://localhost:6080')
 
-    # Detect Railway / cloud environment (VNC iframe won't work over HTTPS due to mixed-content)
-    is_cloud = bool(
-        os.environ.get('RAILWAY_ENVIRONMENT')
+    # Detect cloud / HTTPS environment — VNC iframe can't load http://localhost over HTTPS (mixed-content blocked).
+    # Check Railway-injected vars, other cloud platforms, or the forwarded-proto header (most reliable).
+    is_https = request.META.get('HTTP_X_FORWARDED_PROTO', '').lower() == 'https'
+    is_cloud = is_https or bool(
+        os.environ.get('RAILWAY_ENVIRONMENT_NAME')
+        or os.environ.get('RAILWAY_ENVIRONMENT_ID')
         or os.environ.get('RAILWAY_PROJECT_ID')
+        or os.environ.get('RAILWAY_SERVICE_ID')
         or os.environ.get('RENDER')
         or os.environ.get('HEROKU_APP_NAME')
     )
