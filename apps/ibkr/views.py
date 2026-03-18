@@ -1826,22 +1826,14 @@ def gateway_control(request):
     import os
     ibkr_host = client.host
     in_docker = ibkr_host not in ('localhost', '127.0.0.1')
-    # noVNC is always accessed at localhost:6080 from the browser.
-    # Docker maps container port 6080 to host port 6080.
-    # Override with VNC_URL env var for Railway/cloud deployments.
-    vnc_url = os.environ.get('VNC_URL', 'http://localhost:6080')
-
-    # Detect cloud / HTTPS environment — VNC iframe can't load http://localhost over HTTPS (mixed-content blocked).
-    # Check Railway-injected vars, other cloud platforms, or the forwarded-proto header (most reliable).
+    # VNC URL: on Railway/cloud nginx proxies /vnc/ → localhost:6080 inside the container,
+    # so we can embed the iframe over HTTPS without mixed-content issues.
+    # Locally, noVNC is accessed directly at http://localhost:6080.
     is_https = request.META.get('HTTP_X_FORWARDED_PROTO', '').lower() == 'https'
-    is_cloud = is_https or bool(
-        os.environ.get('RAILWAY_ENVIRONMENT_NAME')
-        or os.environ.get('RAILWAY_ENVIRONMENT_ID')
-        or os.environ.get('RAILWAY_PROJECT_ID')
-        or os.environ.get('RAILWAY_SERVICE_ID')
-        or os.environ.get('RENDER')
-        or os.environ.get('HEROKU_APP_NAME')
-    )
+    if is_https or os.environ.get('VNC_URL'):
+        vnc_url = os.environ.get('VNC_URL', '/vnc/')
+    else:
+        vnc_url = 'http://localhost:6080'
 
     context = {
         'is_connected': is_connected,
@@ -1850,7 +1842,6 @@ def gateway_control(request):
         'client_id': client.client_id,
         'vnc_url': vnc_url,
         'in_docker': in_docker,
-        'is_cloud': is_cloud,
     }
 
     return render(request, 'ibkr/gateway_control.html', context)
