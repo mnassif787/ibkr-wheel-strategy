@@ -6,6 +6,14 @@ from datetime import timedelta
 register = template.Library()
 
 @register.filter
+def get_item(dictionary, key):
+    """Dict lookup in templates: {{ my_dict|get_item:key }}"""
+    try:
+        return dictionary.get(key, [])
+    except AttributeError:
+        return []
+
+@register.filter
 def sub(value, arg):
     """Subtract arg from value"""
     try:
@@ -14,18 +22,18 @@ def sub(value, arg):
         return value
 
 @register.filter
-def add_decimal(value, arg):
-    """Add arg to value"""
-    try:
-        return float(value) + float(arg)
-    except (ValueError, TypeError):
-        return value
-
-@register.filter
 def mul(value, arg):
     """Multiply value by arg"""
     try:
         return float(value) * float(arg)
+    except (ValueError, TypeError):
+        return value
+
+@register.filter
+def add_decimal(value, arg):
+    """Add arg to value"""
+    try:
+        return float(value) + float(arg)
     except (ValueError, TypeError):
         return value
 

@@ -43,12 +43,14 @@ urlpatterns = [
     # Position Sync API
     path('api/positions/sync/', views.sync_positions_api, name='sync_positions_api'),
     path('api/positions/sync/status/', views.sync_positions_status_api, name='sync_positions_status_api'),
+    path('api/positions/auto-expire/', views.auto_expire_positions_api, name='auto_expire_positions_api'),
     
     # Alert Management API
     path('api/alerts/create/', views.create_alert_api, name='create_alert_api'),
     path('api/alerts/', views.list_alerts_api, name='list_alerts_api'),
     path('api/alerts/<int:alert_id>/dismiss/', views.dismiss_alert_api, name='dismiss_alert_api'),
     path('api/telegram/save-chat-id/', views.save_telegram_chat_id, name='save_telegram_chat_id'),
+    path('api/account-summary/', views.account_summary_api, name='account_summary_api'),
     
     # Order Placement
     path('orders/', views.orders_page, name='orders'),
@@ -58,4 +60,16 @@ urlpatterns = [
     path('api/orders/quote/', views.option_quote_api, name='option_quote_api'),
     # VNC Viewer for IB Gateway
     path('vnc/', views.vnc_viewer, name='vnc_viewer'),
+
+    # Discover new stocks API
+    path('api/discover-stocks/', views.discover_stocks_api, name='discover_stocks_api'),
+
+    # Auto-Trade API
+    path('api/auto-trade/suggest-tickers/', views.auto_trade_suggest_tickers_api, name='auto_trade_suggest_tickers_api'),
+    path('api/auto-trade/config/', views.auto_trade_config_api, name='auto_trade_config_api'),
+    path('api/auto-trade/run/', views.auto_trade_run_api, name='auto_trade_run_api'),
+    path('api/auto-trade/logs/', views.auto_trade_logs_api, name='auto_trade_logs_api'),
+    path('api/auto-trade/progress/', views.auto_trade_progress_api, name='auto_trade_progress_api'),
+    path('api/auto-trade/positions-monitor/', views.auto_trade_positions_monitor_api, name='auto_trade_positions_monitor_api'),
+    path('api/auto-trade/logs/clear/', views.auto_trade_logs_clear_api, name='auto_trade_logs_clear_api'),
 ]

@@ -1,10 +1,100 @@
 {% load wheel_filters %}
 
 <div>
-    <div class="mb-6">
-        <h2 class="text-2xl font-bold text-gray-900">📊 My Positions</h2>
-        <p class="text-gray-600 mt-1">Track your stock holdings and option positions with real-time data from IBKR</p>
+    <div class="mb-6 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-900">📊 My Positions</h2>
+            <p class="text-gray-600 mt-1">Track your stock holdings and option positions with real-time data from IBKR</p>
+        </div>
+        <div class="flex gap-2 flex-wrap mt-1">
+            <!-- Auto-Expire stale positions -->
+            <button id="btn-auto-expire"
+                    onclick="autoExpirePositions()"
+                    class="flex items-center gap-1.5 px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold rounded-lg shadow transition-colors">
+                ⏰ Expire Old
+            </button>
+            <!-- Sync from IBKR -->
+            <button id="btn-sync-positions"
+                    onclick="syncPositions()"
+                    class="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow transition-colors">
+                🔄 Sync IBKR
+            </button>
+        </div>
     </div>
+    <!-- Sync status bar -->
+    <div id="sync-status-bar" class="hidden mb-4 px-4 py-2 rounded-lg text-sm font-medium"></div>
+
+    <script>
+    function autoExpirePositions() {
+        const btn = document.getElementById('btn-auto-expire');
+        const bar = document.getElementById('sync-status-bar');
+        btn.disabled = true;
+        btn.textContent = '⏳ Processing...';
+        bar.className = 'mb-4 px-4 py-2 rounded-lg text-sm font-medium bg-orange-50 text-orange-800 border border-orange-200';
+        bar.textContent = 'Checking for expired positions...';
+        fetch('{% url "ibkr:auto_expire_positions_api" %}', {method: 'POST', headers: {'X-CSRFToken': getCsrfToken()}})
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    bar.className = 'mb-4 px-4 py-2 rounded-lg text-sm font-medium bg-green-50 text-green-800 border border-green-200';
+                    bar.textContent = data.message + ' Refreshing...';
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    bar.className = 'mb-4 px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-800 border border-red-200';
+                    bar.textContent = 'Error: ' + (data.error || 'Unknown error');
+                    btn.disabled = false; btn.textContent = '⏰ Expire Old';
+                }
+            });
+    }
+
+    function syncPositions() {
+        const btn = document.getElementById('btn-sync-positions');
+        const bar = document.getElementById('sync-status-bar');
+        btn.disabled = true;
+        btn.textContent = '⏳ Syncing...';
+        bar.className = 'mb-4 px-4 py-2 rounded-lg text-sm font-medium bg-blue-50 text-blue-800 border border-blue-200';
+        bar.textContent = 'Connecting to IBKR and syncing positions...';
+        fetch('{% url "ibkr:sync_positions_api" %}', {method: 'POST', headers: {'X-CSRFToken': getCsrfToken()}})
+            .then(r => r.json())
+            .then(data => {
+                if (data.success || data.status === 'running') {
+                    bar.textContent = 'Sync started. Checking status...';
+                    pollSyncStatus();
+                } else {
+                    bar.className = 'mb-4 px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-800 border border-red-200';
+                    bar.textContent = 'Sync failed: ' + (data.error || 'IBKR not connected');
+                    btn.disabled = false; btn.textContent = '🔄 Sync IBKR';
+                }
+            });
+    }
+
+    function pollSyncStatus() {
+        const bar = document.getElementById('sync-status-bar');
+        const btn = document.getElementById('btn-sync-positions');
+        const interval = setInterval(() => {
+            fetch('{% url "ibkr:sync_positions_status_api" %}')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'completed') {
+                        clearInterval(interval);
+                        bar.className = 'mb-4 px-4 py-2 rounded-lg text-sm font-medium bg-green-50 text-green-800 border border-green-200';
+                        bar.textContent = '✅ ' + data.message + ' Refreshing...';
+                        setTimeout(() => location.reload(), 1200);
+                    } else if (data.status === 'error') {
+                        clearInterval(interval);
+                        bar.className = 'mb-4 px-4 py-2 rounded-lg text-sm font-medium bg-red-50 text-red-800 border border-red-200';
+                        bar.textContent = '❌ ' + (data.error || 'Sync failed');
+                        btn.disabled = false; btn.textContent = '🔄 Sync IBKR';
+                    }
+                });
+        }, 2000);
+    }
+
+    function getCsrfToken() {
+        const cookie = document.cookie.split(';').find(c => c.trim().startsWith('csrftoken='));
+        return cookie ? cookie.split('=')[1] : '';
+    }
+    </script>
 
     <!-- Stock Positions -->
     {% if stock_positions %}
@@ -62,10 +152,87 @@
                            class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-center text-sm font-medium">
                             📊 View Details
                         </a>
-                        <a href="{% url 'ibkr:hub' %}?ticker={{ position.stock.ticker }}#options" 
-                           class="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-center text-sm font-medium">
-                            💰 Sell Covered Call
-                        </a>
+                        <button onclick="toggleCoveredCalls('{{ position.stock.ticker }}')"
+                                class="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-center text-sm font-medium">
+                            💰 Sell Covered Call <span id="cc-arrow-{{ position.stock.ticker }}">▾</span>
+                        </button>
+                    </div>
+
+                    <!-- Covered Call Panel -->
+                    <div id="cc-panel-{{ position.stock.ticker }}" class="hidden mt-4 border-2 border-green-300 rounded-lg overflow-hidden">
+                        <div class="bg-gradient-to-r from-green-50 to-emerald-50 px-4 py-3 border-b border-green-200">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h5 class="font-bold text-green-800 text-sm">📈 Best Covered Call Options for {{ position.stock.ticker }}</h5>
+                                    <p class="text-xs text-green-600 mt-0.5">You own {{ position.quantity }} shares — sell 1 call per 100 shares. Strike above current price = OTM (shares less likely to be called away).</p>
+                                </div>
+                                <span class="text-xs text-gray-500 font-medium">Current: ${{ position.current_price|floatformat:2 }}</span>
+                            </div>
+                        </div>
+
+                        {% if position.covered_calls %}
+                        <div class="divide-y divide-gray-100">
+                            {% for cc in position.covered_calls %}
+                            <div class="px-4 py-3 hover:bg-green-50 transition-colors">
+                                <div class="flex items-center justify-between mb-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-bold text-gray-900 text-sm">${{ cc.strike|floatformat:2 }} CALL</span>
+                                        <span class="text-xs text-gray-500">exp {{ cc.expiry|date:"M d" }} ({{ cc.dte }}d)</span>
+                                        <span class="px-1.5 py-0.5 rounded text-xs font-semibold
+                                            {% if cc.otm_pct >= 3 %}bg-green-100 text-green-700
+                                            {% elif cc.otm_pct >= 1 %}bg-yellow-100 text-yellow-700
+                                            {% else %}bg-orange-100 text-orange-700{% endif %}">
+                                            +{{ cc.otm_pct }}% OTM
+                                        </span>
+                                    </div>
+                                    <div class="text-right">
+                                        <span class="font-bold text-green-700 text-sm">${{ cc.premium|floatformat:2 }}/sh</span>
+                                        <span class="text-xs text-gray-500 block">{{ cc.apy_pct }}% APY</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between mt-1">
+                                    <div class="flex gap-3 text-xs text-gray-500">
+                                        <span>Δ {{ cc.delta|floatformat:2 }}</span>
+                                        <span>IV {{ cc.iv|floatformat:0 }}%</span>
+                                        <span class="text-orange-600">{{ cc.prob_assignment }}% called away</span>
+                                        <span>Contract: ${{ cc.premium_per_contract|floatformat:2 }}</span>
+                                    </div>
+                                    <a href="{% url 'ibkr:orders' %}?action=sell_call&ticker={{ position.stock.ticker }}&strike={{ cc.strike }}&expiry={{ cc.expiry|date:'Y-m-d' }}&premium={{ cc.premium|floatformat:2 }}"
+                                       class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg transition-colors whitespace-nowrap">
+                                        📝 Sell This Call
+                                    </a>
+                                </div>
+                                <!-- Total P/L if assigned -->
+                                <div class="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2 flex-wrap text-xs">
+                                    <span class="text-gray-400">If assigned at ${{ cc.strike|floatformat:2 }}:</span>
+                                    <span class="font-semibold {% if cc.capital_pl_per_share >= 0 %}text-green-600{% else %}text-red-500{% endif %}">
+                                        Shares {% if cc.capital_pl_per_share >= 0 %}+{% endif %}${{ cc.capital_pl_per_share|floatformat:2 }}/sh
+                                    </span>
+                                    <span class="text-gray-400">+</span>
+                                    <span class="text-green-600 font-semibold">${{ cc.premium|floatformat:2 }} premium</span>
+                                    <span class="text-gray-400">=</span>
+                                    <span class="font-bold px-2 py-0.5 rounded {% if cc.total_pl_per_share >= 0 %}bg-green-100 text-green-700{% else %}bg-red-100 text-red-600{% endif %}">
+                                        Total {% if cc.total_pl_per_share >= 0 %}+{% endif %}${{ cc.total_pl_per_share|floatformat:2 }}/sh &nbsp;({% if cc.total_pl_per_contract >= 0 %}+{% endif %}${{ cc.total_pl_per_contract|floatformat:0 }}/contract)
+                                    </span>
+                                    <span class="text-gray-400 ml-1">avg cost ${{ cc.avg_cost|floatformat:2 }}</span>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <div class="px-4 py-2 bg-gray-50 border-t border-gray-100">
+                            <p class="text-xs text-gray-500 italic">Best options sorted by APY. Higher strike = safer (less chance of shares being called away). Click "Sell This Call" to pre-fill the order form.</p>
+                        </div>
+                        {% else %}
+                        <div class="px-4 py-6 text-center text-gray-500">
+                            <div class="text-3xl mb-2">📊</div>
+                            <p class="text-sm font-semibold">No covered call options found</p>
+                            <p class="text-xs mt-1">No CALL options with DTE 7–45 days above current price in the database.</p>
+                            <a href="{% url 'ibkr:hub' %}?tab=discovery&subtab=options&ticker={{ position.stock.ticker }}"
+                               class="inline-block mt-3 px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700">
+                                🔄 Sync Options Data
+                            </a>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -81,9 +248,47 @@
         </div>
 
         {% if open_positions %}
-        <div class="space-y-4">
+        <div class="space-y-2">
             {% for position in open_positions %}
-            <div class="bg-white rounded-lg shadow-md border-2 border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
+            <div class="bg-white rounded-lg shadow-sm border-2 border-gray-200 overflow-hidden">
+
+                <!-- ── Collapsed summary row (always visible) ── -->
+                <button onclick="togglePosition('pos-{{ position.id }}')"
+                        class="w-full flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition-colors text-left">
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <!-- Type badge -->
+                        <span class="px-2.5 py-1 rounded-full text-xs font-bold
+                            {% if position.option_type == 'PUT' %}bg-red-100 text-red-800{% else %}bg-green-100 text-green-800{% endif %}">
+                            {{ position.option_type }}
+                        </span>
+                        <!-- Title -->
+                        <span class="font-bold text-gray-900 text-base">
+                            {{ position.stock.ticker }} ${{ position.strike }} — exp {{ position.expiry_date|date:"M d, Y" }}
+                        </span>
+                        <!-- DTE pill -->
+                        <span class="text-xs px-2 py-0.5 rounded-full font-semibold
+                            {% if position.dte <= 7 %}bg-red-100 text-red-700
+                            {% elif position.dte <= 14 %}bg-orange-100 text-orange-700
+                            {% else %}bg-blue-100 text-blue-700{% endif %}">
+                            {{ position.dte }}d left
+                        </span>
+                        <!-- Premium -->
+                        <span class="text-xs text-gray-500">💰 ${{ position.total_premium }} received</span>
+                        <!-- P/L pill -->
+                        {% if position.unrealized_pl %}
+                        <span class="text-xs font-bold px-2 py-0.5 rounded-full
+                            {% if position.unrealized_pl > 0 %}bg-green-100 text-green-700{% else %}bg-red-100 text-red-700{% endif %}">
+                            {% if position.unrealized_pl > 0 %}+{% endif %}${{ position.unrealized_pl|floatformat:2 }}
+                            {% if position.unrealized_pl_pct %} ({{ position.unrealized_pl_pct|floatformat:1 }}%){% endif %}
+                        </span>
+                        {% endif %}
+                    </div>
+                    <!-- Arrow indicator -->
+                    <span id="pos-arrow-{{ position.id }}" class="text-gray-400 text-lg ml-3 shrink-0">▾</span>
+                </button>
+
+                <!-- ── Expandable detail body (hidden by default) ── -->
+                <div id="pos-{{ position.id }}" class="hidden border-t border-gray-100">
                 <div class="p-6">
                     <div class="flex items-start justify-between mb-4">
                         <div>
@@ -445,7 +650,8 @@
                         </div>
                     </div>
                 </div>
-            </div>
+                </div><!-- end collapsible panel -->
+            </div><!-- end position card -->
             {% endfor %}
         </div>
         {% else %}
@@ -472,43 +678,88 @@
                 <thead class="bg-gray-50">
                     <tr>
                         <th class="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase">Position</th>
-                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Entry</th>
-                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Exit</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Sold Option</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Obligation / Outcome</th>
                         <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Days Held</th>
-                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">P/L</th>
+                        <th class="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase">Option P/L</th>
                         <th class="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase">Status</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
                     {% for position in closed_positions %}
-                    <tr class="hover:bg-gray-50">
-                        <td class="px-4 py-3">
-                            <div class="font-bold text-gray-900">{{ position.stock.ticker }} ${{ position.strike }}</div>
-                            <div class="text-xs text-gray-500">{{ position.option_type }}</div>
+                    {% with strike_f=position.strike|floatformat:2 contracts=position.contracts %}
+                    <tr class="hover:bg-gray-50 {% if position.status == 'ASSIGNED' %}bg-yellow-50{% endif %}">
+                        <!-- Position -->
+                        <td class="px-4 py-4">
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-0.5 rounded text-xs font-bold
+                                    {% if position.option_type == 'PUT' %}bg-red-100 text-red-700{% else %}bg-green-100 text-green-700{% endif %}">
+                                    {{ position.option_type }}
+                                </span>
+                                <div>
+                                    <div class="font-bold text-gray-900">{{ position.stock.ticker }}</div>
+                                    <div class="text-xs text-gray-500">Strike ${{ strike_f }} · exp {{ position.expiry_date|date:"M d, Y" }}</div>
+                                </div>
+                            </div>
                         </td>
-                        <td class="px-4 py-3 text-right text-sm">
-                            <div>${{ position.total_premium|floatformat:2 }}</div>
-                            <div class="text-xs text-gray-500">{{ position.entry_date|date:"m/d/y" }}</div>
+
+                        <!-- What you SOLD (the option) -->
+                        <td class="px-4 py-4 text-right">
+                            <div class="text-xs text-gray-500 mb-0.5">Opened {{ position.entry_date|date:"m/d/y" }}</div>
+                            <div class="font-semibold text-green-700">+${{ position.entry_premium|floatformat:2 }}/share</div>
+                            <div class="text-xs text-gray-500">+${{ position.total_premium|floatformat:2 }} total ({{ contracts }} contract{{ contracts|pluralize }})</div>
                         </td>
-                        <td class="px-4 py-3 text-right text-sm">
-                            {% if position.exit_premium %}
-                            <div>${{ position.exit_premium|floatformat:2 }}</div>
+
+                        <!-- Obligation / Outcome -->
+                        <td class="px-4 py-4 text-right">
+                            {% if position.status == 'ASSIGNED' %}
+                                {% if position.option_type == 'PUT' %}
+                                {# Assigned on PUT: you BOUGHT shares at strike price #}
+                                <div class="text-xs font-semibold text-orange-600 mb-1">📥 Shares Purchased</div>
+                                <div class="font-bold text-gray-900">Bought {{ contracts }}00 shares @ ${{ strike_f }}/sh</div>
+                                <div class="text-xs text-gray-500">Total cost: ${{ position.strike|floatformat:2 }} × {{ contracts }}00 = <span class="font-semibold">${{ position.total_premium|floatformat:2 }}</div>
+                                <div class="mt-1 px-2 py-1 bg-blue-50 rounded text-xs text-blue-800">
+                                    Effective cost: ${{ strike_f }} − ${{ position.entry_premium|floatformat:2 }}/sh premium
+                                    = <span class="font-bold text-blue-900">${{ position.strike|sub:position.entry_premium|floatformat:2 }}/share</span>
+                                </div>
+                                {% else %}
+                                {# Assigned on CALL: you SOLD shares at strike price #}
+                                <div class="text-xs font-semibold text-green-600 mb-1">📤 Shares Called Away</div>
+                                <div class="font-bold text-gray-900">Sold {{ contracts }}00 shares @ ${{ strike_f }}</div>
+                                {% endif %}
+                                <div class="text-xs text-gray-400 mt-1">{{ position.exit_date|date:"m/d/y" }}</div>
+                            {% elif position.status == 'EXPIRED' %}
+                                <div class="text-xs font-semibold text-green-600 mb-1">✅ Expired Worthless</div>
+                                <div class="text-sm text-gray-600">Option expired, kept full premium</div>
+                                <div class="text-xs text-gray-400 mt-1">{{ position.exit_date|date:"m/d/y" }}</div>
+                            {% elif position.status == 'CLOSED' %}
+                                <div class="text-xs font-semibold text-blue-600 mb-1">🔄 Bought Back</div>
+                                {% if position.exit_premium %}
+                                <div class="font-semibold text-red-600">−${{ position.exit_premium|floatformat:2 }}/share to close</div>
+                                {% endif %}
+                                <div class="text-xs text-gray-400 mt-1">{{ position.exit_date|date:"m/d/y" }}</div>
+                            {% else %}
+                                <div class="text-xs text-gray-400">{{ position.exit_date|date:"m/d/y"|default:"-" }}</div>
                             {% endif %}
-                            <div class="text-xs text-gray-500">
-                                {% if position.exit_date %}{{ position.exit_date|date:"m/d/y" }}{% else %}-{% endif %}
-                            </div>
                         </td>
-                        <td class="px-4 py-3 text-right text-sm font-semibold">{{ position.days_held }}</td>
-                        <td class="px-4 py-3 text-right">
-                            {% if position.realized_pl %}
-                            <div class="font-bold {% if position.realized_pl > 0 %}text-green-700{% else %}text-red-700{% endif %}">
-                                ${{ position.realized_pl|floatformat:2 }}
+
+                        <!-- Days Held -->
+                        <td class="px-4 py-4 text-right text-sm font-semibold text-gray-700">{{ position.days_held }}d</td>
+
+                        <!-- Option P/L -->
+                        <td class="px-4 py-4 text-right">
+                            {% if position.realized_pl is not None %}
+                            <div class="font-bold text-lg {% if position.realized_pl >= 0 %}text-green-700{% else %}text-red-700{% endif %}">
+                                {% if position.realized_pl >= 0 %}+{% endif %}${{ position.realized_pl|floatformat:2 }}
                             </div>
+                            <div class="text-xs text-gray-500">option premium kept</div>
                             {% else %}
                             <span class="text-gray-400">-</span>
                             {% endif %}
                         </td>
-                        <td class="px-4 py-3 text-center">
+
+                        <!-- Status badge -->
+                        <td class="px-4 py-4 text-center">
                             <span class="px-2 py-1 text-xs font-semibold rounded-full
                                 {% if position.status == 'EXPIRED' %}bg-green-100 text-green-800
                                 {% elif position.status == 'CLOSED' %}bg-blue-100 text-blue-800
@@ -516,11 +767,21 @@
                                 {% else %}bg-gray-100 text-gray-800{% endif %}">
                                 {{ position.status }}
                             </span>
+                            {% if position.status == 'ASSIGNED' and position.option_type == 'PUT' %}
+                            <div class="text-xs text-orange-600 mt-1 font-medium">now holding shares</div>
+                            {% endif %}
                         </td>
                     </tr>
+                    {% endwith %}
                     {% endfor %}
                 </tbody>
             </table>
+            <!-- Legend -->
+            <div class="px-4 py-3 bg-gray-50 border-t border-gray-200 flex flex-wrap gap-4 text-xs text-gray-500">
+                <span><span class="font-semibold text-green-700">EXPIRED</span> = option expired worthless → you kept the full premium 🎉</span>
+                <span><span class="font-semibold text-yellow-700">ASSIGNED</span> = option exercised → PUT: you bought shares at strike price · CALL: shares were sold</span>
+                <span><span class="font-semibold text-blue-700">CLOSED</span> = you bought the option back early to take profit or cut loss</span>
+            </div>
         </div>
     </div>
     {% endif %}
@@ -620,6 +881,32 @@
 </div>
 
 <script>
+function togglePosition(id) {
+    const panel = document.getElementById(id);
+    const posId = id.replace('pos-', '');
+    const arrow = document.getElementById('pos-arrow-' + posId);
+    if (panel.classList.contains('hidden')) {
+        panel.classList.remove('hidden');
+        arrow.textContent = '▴';
+    } else {
+        panel.classList.add('hidden');
+        arrow.textContent = '▾';
+    }
+}
+
+function toggleCoveredCalls(ticker) {
+    const panel = document.getElementById('cc-panel-' + ticker);
+    const arrow = document.getElementById('cc-arrow-' + ticker);
+    if (panel.classList.contains('hidden')) {
+        panel.classList.remove('hidden');
+        arrow.textContent = '▴';
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+        panel.classList.add('hidden');
+        arrow.textContent = '▾';
+    }
+}
+
 let closeModalData = null;
 
 function closePosition(positionId, btn) {

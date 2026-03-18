@@ -585,3 +585,122 @@ class StockPosition(models.Model):
         """Current stock price"""
         return self.stock.last_price if self.stock.last_price else self.avg_cost
 
+
+# ---------------------------------------------------------------------------
+# Auto-Trade models
+# ---------------------------------------------------------------------------
+
+class AutoTradeConfig(models.Model):
+    """Global auto-trade settings — singleton (only one row expected)."""
+    RISK_CHOICES = [
+        ('conservative', 'Conservative'),
+        ('moderate', 'Moderate'),
+        ('aggressive', 'Aggressive'),
+    ]
+    enabled = models.BooleanField(default=False, help_text='Master on/off switch for auto-trading')
+    monthly_goal = models.DecimalField(
+        max_digits=10, decimal_places=2, default=1000,
+        help_text='Target premium income to collect each calendar month ($)'
+    )
+    risk_level = models.CharField(max_length=20, choices=RISK_CHOICES, default='moderate')
+    # Conservative: DTE 30-45, delta 0.20-0.25
+    # Moderate:     DTE 21-35, delta 0.25-0.35
+    # Aggressive:   DTE 14-21, delta 0.30-0.40
+    last_run = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Auto-Trade Config'
+        verbose_name_plural = 'Auto-Trade Config'
+
+    def __str__(self):
+        status = '✅ ON' if self.enabled else '⏸ OFF'
+        return f"Auto-Trade {status} | Goal: ${self.monthly_goal}/mo | Risk: {self.risk_level}"
+
+    @classmethod
+    def get_config(cls):
+        """Return the singleton config, creating it with defaults if needed."""
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def dte_range(self):
+        """Return (min_dte, max_dte) based on risk level."""
+        return {
+            'conservative': (30, 45),
+            'moderate': (21, 35),
+            'aggressive': (14, 21),
+        }.get(self.risk_level, (21, 35))
+
+    def delta_range(self):
+        """Return (min_abs_delta, max_abs_delta) based on risk level."""
+        return {
+            'conservative': (0.20, 0.25),
+            'moderate': (0.25, 0.35),
+            'aggressive': (0.30, 0.40),
+        }.get(self.risk_level, (0.25, 0.35))
+
+
+class AutoTradeStockConfig(models.Model):
+    """Per-stock auto-trade enable toggle and optional overrides."""
+    stock = models.OneToOneField(Stock, on_delete=models.CASCADE, related_name='auto_trade_config')
+    enabled = models.BooleanField(default=True, help_text='Enable auto-trading for this stock')
+    max_contracts = models.IntegerField(
+        null=True, blank=True,
+        help_text='Max contracts per trade (null = limited only by buying power)'
+    )
+    dte_min_override = models.IntegerField(null=True, blank=True, help_text='Override global min DTE')
+    dte_max_override = models.IntegerField(null=True, blank=True, help_text='Override global max DTE')
+    delta_min_override = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    delta_max_override = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['stock__ticker']
+        verbose_name = 'Auto-Trade Stock Config'
+        verbose_name_plural = 'Auto-Trade Stock Configs'
+
+    def __str__(self):
+        status = '✅' if self.enabled else '⏸'
+        return f"{status} {self.stock.ticker}"
+
+
+class AutoTradeLog(models.Model):
+    """Immutable audit log of every auto-trade attempt."""
+    ACTION_CHOICES = [
+        ('SELL_PUT', 'Sell Cash-Secured PUT'),
+        ('SELL_CALL', 'Sell Covered CALL'),
+        ('BUY_TO_CLOSE', 'Buy-to-Close'),
+        ('SKIPPED', 'Skipped'),
+    ]
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('FILLED', 'Filled'),
+        ('FAILED', 'Failed'),
+        ('SKIPPED', 'Skipped'),
+    ]
+    timestamp = models.DateTimeField(auto_now_add=True)
+    stock = models.ForeignKey(Stock, on_delete=models.CASCADE, related_name='auto_trade_logs')
+    action = models.CharField(max_length=15, choices=ACTION_CHOICES)
+    strike = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    expiry_date = models.DateField(null=True, blank=True)
+    contracts = models.IntegerField(default=0)
+    premium_per_contract = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    total_premium = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    ibkr_order_id = models.CharField(max_length=50, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
+    reason = models.CharField(max_length=500, blank=True, help_text='Why this action was taken or skipped')
+    buying_power_before = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    goal_contribution = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='$ this trade contributes toward the monthly goal'
+    )
+
+    class Meta:
+        ordering = ['-timestamp']
+        verbose_name = 'Auto-Trade Log'
+        verbose_name_plural = 'Auto-Trade Logs'
+
+    def __str__(self):
+        return f"{self.timestamp:%Y-%m-%d %H:%M} | {self.action} {self.stock.ticker} | {self.status}"

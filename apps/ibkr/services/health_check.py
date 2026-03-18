@@ -8,6 +8,7 @@ from django.conf import settings
 from django.db import connection
 from django.utils import timezone
 from datetime import timedelta
+import time
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
@@ -26,26 +27,45 @@ class HealthCheckService:
     def run_all_checks(self) -> Dict:
         """Run all health checks and return results"""
         logger.info("🔍 Starting platform health checks...")
-        
-        # Run all checks
-        self.check_database()
-        self.check_ibkr_connection()
-        self.check_yfinance()
-        self.check_technical_indicators()
-        self.check_options_data()
-        self.check_data_freshness()
-        
+
+        overall_start = time.time()
+
+        # Run all checks with per-check timing
+        check_methods = [
+            self.check_database,
+            self.check_ibkr_connection,
+            self.check_yfinance,
+            self.check_technical_indicators,
+            self.check_options_data,
+            self.check_data_freshness,
+            self.check_ai_service,
+            self.check_disk_space,
+        ]
+
+        for check_fn in check_methods:
+            check_start = time.time()
+            check_fn()
+            elapsed_ms = round((time.time() - check_start) * 1000, 2)
+            if self.results['checks']:
+                self.results['checks'][-1]['response_time_ms'] = elapsed_ms
+
         # Determine overall status
         failed_checks = [c for c in self.results['checks'] if c['status'] == 'failed']
         warning_checks = [c for c in self.results['checks'] if c['status'] == 'warning']
-        
+
         if failed_checks:
             self.results['overall_status'] = 'critical'
         elif warning_checks:
             self.results['overall_status'] = 'warning'
         else:
             self.results['overall_status'] = 'healthy'
-        
+
+        # Summary counts for template
+        self.results['passed'] = len([c for c in self.results['checks'] if c['status'] == 'passed'])
+        self.results['warnings'] = len([c for c in self.results['checks'] if c['status'] == 'warning'])
+        self.results['failed'] = len([c for c in self.results['checks'] if c['status'] == 'failed'])
+        self.results['total_time_ms'] = round((time.time() - overall_start) * 1000, 2)
+
         self._log_results()
         return self.results
     
@@ -72,7 +92,13 @@ class HealthCheckService:
             indicator_count = StockIndicator.objects.count()
             
             check['message'] = f'Connected. Stocks: {stock_count}, Options: {option_count}, Watchlist: {watchlist_count}, Indicators: {indicator_count}'
-            
+            check['metrics'] = [
+                {'label': 'Stocks', 'value': stock_count},
+                {'label': 'Options', 'value': f'{option_count:,}'},
+                {'label': 'Watchlist', 'value': watchlist_count},
+                {'label': 'Indicators', 'value': indicator_count},
+            ]
+
             if stock_count == 0:
                 check['status'] = 'warning'
                 check['message'] += ' | No stocks in database'
@@ -106,12 +132,19 @@ class HealthCheckService:
             # Try to connect/reconnect if not already connected
             if client.ensure_connected():
                 check['message'] = f'Connected to {settings.IBKR_HOST}:{settings.IBKR_PORT} (Client ID: {client.client_id})'
+                check['metrics'] = [
+                    {'label': 'Mode', 'value': 'Live IBKR'},
+                    {'label': 'Host', 'value': f'{settings.IBKR_HOST}:{settings.IBKR_PORT}'},
+                ]
                 logger.info(f"✅ IBKR check passed - {check['message']}")
                 check['status'] = 'passed'
             else:
                 check['status'] = 'warning'
                 check['message'] = f'Cannot connect to {settings.IBKR_HOST}:{settings.IBKR_PORT} - Using YFinance instead'
                 check['solution'] = 'Start TWS/IB Gateway on the correct port. Paper trading: 7496, Live: 7497'
+                check['metrics'] = [
+                    {'label': 'Mode', 'value': 'YFinance Fallback'},
+                ]
                 logger.warning(f"⚠️ IBKR not connected")
         except Exception as e:
             check['status'] = 'warning'
@@ -136,13 +169,24 @@ class HealthCheckService:
             info = test_ticker.info
             
             if info and info.get('currentPrice'):
-                check['message'] = f'Connected. Test query successful (AAPL: ${info.get("currentPrice")})'
+                price = info.get('currentPrice')
+                check['message'] = f'Connected. Test query successful (AAPL: ${price})'
+                check['metrics'] = [
+                    {'label': 'Test Ticker', 'value': 'AAPL'},
+                    {'label': 'Price', 'value': f'${price}'},
+                    {'label': 'Status', 'value': 'Online'},
+                ]
                 logger.info(f"✅ YFinance check passed")
             else:
                 hist = test_ticker.history(period='1d')
                 if not hist.empty:
                     price = hist['Close'].iloc[-1]
                     check['message'] = f'Connected. Historical data accessible (AAPL: ${price:.2f})'
+                    check['metrics'] = [
+                        {'label': 'Test Ticker', 'value': 'AAPL'},
+                        {'label': 'Price', 'value': f'${price:.2f}'},
+                        {'label': 'Status', 'value': 'Online'},
+                    ]
                     logger.info(f"✅ YFinance check passed (historical data)")
                 else:
                     check['status'] = 'warning'
@@ -284,13 +328,25 @@ class HealthCheckService:
             test_ticker = 'AAPL'
             options = YFinanceOptionsService.get_options_chain(test_ticker, max_expiries=1)
             
+            from apps.ibkr.models import Option
+            total_options_db = Option.objects.count()
+
             if options and len(options) > 0:
                 check['message'] = f'Options data accessible. Test query returned {len(options)} contracts for {test_ticker}'
+                check['metrics'] = [
+                    {'label': 'Live Contracts', 'value': len(options)},
+                    {'label': 'In Database', 'value': f'{total_options_db:,}'},
+                    {'label': 'Test Ticker', 'value': test_ticker},
+                ]
                 logger.info(f"✅ Options data check passed")
             else:
                 check['status'] = 'warning'
                 check['message'] = 'No options data returned for test ticker'
                 check['solution'] = 'Check internet connection and yfinance library. Some stocks may not have options.'
+                check['metrics'] = [
+                    {'label': 'Live Contracts', 'value': 0},
+                    {'label': 'In Database', 'value': f'{total_options_db:,}'},
+                ]
                 logger.warning(f"⚠️ Options data check warning - no data returned")
                 
         except Exception as e:
@@ -302,7 +358,7 @@ class HealthCheckService:
         self.results['checks'].append(check)
     
     def check_data_freshness(self):
-        """Check if existing data is fresh"""
+        """Check if existing data is fresh - timestamps shown in Abu Dhabi time (UTC+4)"""
         check = {
             'name': 'Data Freshness',
             'status': 'passed',
@@ -310,44 +366,79 @@ class HealthCheckService:
             'solution': '',
             'icon': '⏰'
         }
-        
+
         try:
+            import pytz
             from apps.ibkr.models import Stock, Option, StockIndicator
-            
+
+            abudhabi_tz = pytz.timezone('Asia/Dubai')  # UAE / Abu Dhabi = UTC+4
             now = timezone.now()
             stale_threshold = timedelta(hours=24)
-            recent_threshold = timedelta(hours=4)  # Very fresh data
-            
+            recent_threshold = timedelta(hours=4)
+
             stocks = Stock.objects.all()
             if stocks.exists():
                 stale_stocks = stocks.filter(last_updated__lt=now - stale_threshold).count()
                 recent_stocks = stocks.filter(last_updated__gte=now - recent_threshold).count()
                 total_stocks = stocks.count()
-                
+
+                # Most recent stock update = last time a refresh happened
+                most_recent_stock = stocks.order_by('-last_updated').first()
+                last_refreshed_utc = most_recent_stock.last_updated if most_recent_stock else None
+                if last_refreshed_utc:
+                    last_refreshed_ad = last_refreshed_utc.astimezone(abudhabi_tz)
+                    last_refreshed_str = last_refreshed_ad.strftime('%d %b %Y %H:%M:%S GST')
+                    # How long ago
+                    age_seconds = (now - last_refreshed_utc).total_seconds()
+                    if age_seconds < 3600:
+                        age_str = f'{int(age_seconds // 60)}m ago'
+                    elif age_seconds < 86400:
+                        age_str = f'{int(age_seconds // 3600)}h ago'
+                    else:
+                        age_str = f'{int(age_seconds // 86400)}d ago'
+                else:
+                    last_refreshed_str = 'Never'
+                    age_str = 'N/A'
+
                 indicators = StockIndicator.objects.all()
-                # StockIndicator uses 'last_calculated' not 'last_updated'
                 try:
                     stale_indicators = indicators.filter(last_calculated__lt=now - stale_threshold).count()
-                except:
+                except Exception:
                     stale_indicators = 0
                 total_indicators = indicators.count()
-                
+
                 options = Option.objects.all()
                 stale_options = options.filter(last_updated__lt=now - stale_threshold).count()
                 total_options = options.count()
-                
+
                 # Calculate staleness percentage
                 total_items = total_stocks + total_indicators + total_options
                 stale_count = stale_stocks + stale_indicators + stale_options
-                
+
+                fresh_stocks = total_stocks - stale_stocks
+                freshness_pct = round((fresh_stocks / total_stocks * 100) if total_stocks > 0 else 0, 1)
+
+                # Base metrics always shown
+                base_metrics = [
+                    {'label': 'Last Refreshed', 'value': last_refreshed_str},
+                    {'label': 'Age', 'value': age_str},
+                    {'label': 'Fresh Stocks', 'value': f'{fresh_stocks}/{total_stocks}'},
+                    {'label': 'Freshness', 'value': f'{freshness_pct}%'},
+                ]
+
                 if total_items == 0:
                     check['status'] = 'warning'
                     check['message'] = 'No data in database yet'
                     check['solution'] = 'Run: python manage.py discover_stocks && python manage.py calculate_indicators'
+                    check['metrics'] = [{'label': 'Freshness', 'value': '0%'}]
                 elif stale_count == 0:
-                    check['message'] = f'✨ All data fresh! Stocks: {total_stocks}, Indicators: {total_indicators}, Options: {total_options}'
-                    if recent_stocks > 0:
-                        check['message'] += f' ({recent_stocks} stocks updated in last 4h)'
+                    check['message'] = (
+                        f'All data fresh. Last refreshed: {last_refreshed_str} ({age_str}). '
+                        f'Stocks: {total_stocks}, Indicators: {total_indicators}, Options: {total_options:,}'
+                    )
+                    check['metrics'] = base_metrics + [
+                        {'label': 'Stale Options', 'value': stale_options},
+                    ]
                     logger.info(f"✅ Data freshness check passed")
                 elif stale_count / total_items < 0.3:  # Less than 30% stale is OK
                     check['status'] = 'warning'
@@ -358,9 +449,15 @@ class HealthCheckService:
                         stale_items.append(f'{stale_indicators}/{total_indicators} indicators')
                     if stale_options > 0:
                         stale_items.append(f'{stale_options}/{total_options} options')
-                    check['message'] = f'Some stale data (>24h): {", ".join(stale_items)}. Recent: {recent_stocks} stocks'
+                    check['message'] = (
+                        f'Some stale data (>24h): {", ".join(stale_items)}. '
+                        f'Last refreshed: {last_refreshed_str} ({age_str})'
+                    )
                     check['solution'] = 'Click the Refresh button in navbar (⚡ Quick mode recommended)'
                     check['command'] = 'python manage.py quick_refresh'
+                    check['metrics'] = base_metrics + [
+                        {'label': 'Stale Indicators', 'value': stale_indicators},
+                    ]
                     logger.warning(f"⚠️ Some data is stale but acceptable")
                 else:
                     check['status'] = 'warning'
@@ -371,9 +468,15 @@ class HealthCheckService:
                         stale_items.append(f'{stale_indicators}/{total_indicators} indicators')
                     if stale_options > 0:
                         stale_items.append(f'{stale_options}/{total_options} options')
-                    check['message'] = f'Most data stale (>24h): {", ".join(stale_items)}'
+                    check['message'] = (
+                        f'Most data stale (>24h): {", ".join(stale_items)}. '
+                        f'Last refreshed: {last_refreshed_str} ({age_str})'
+                    )
                     check['solution'] = 'Click the Refresh button in navbar or run: python manage.py quick_refresh'
                     check['command'] = 'python manage.py refresh_all_data'
+                    check['metrics'] = base_metrics + [
+                        {'label': 'Stale Total', 'value': stale_count},
+                    ]
                     logger.warning(f"⚠️ Data freshness warning - {check['message']}")
             else:
                 check['status'] = 'warning'
@@ -389,6 +492,119 @@ class HealthCheckService:
         
         self.results['checks'].append(check)
     
+    def check_ai_service(self):
+        """Check AI scoring service availability"""
+        check = {
+            'name': 'AI Scoring Service',
+            'status': 'passed',
+            'message': '',
+            'solution': '',
+            'icon': '🤖',
+            'metrics': [],
+        }
+
+        try:
+            from apps.ibkr.models import Stock
+            from apps.ibkr.services.ai_analysis import AIAnalyzer
+
+            total_stocks = Stock.objects.count()
+            # Use last_price (the correct field name on the Stock model)
+            sample_stock = Stock.objects.filter(last_price__isnull=False).first()
+
+            if sample_stock:
+                # get_wheel_strategy_analysis is the correct method
+                analysis = AIAnalyzer.get_wheel_strategy_analysis(sample_stock)
+                wheel_score = analysis.get('wheel_score', 'N/A')
+                strategy_rating = analysis.get('strategy_rating', 'N/A')
+                check['message'] = (
+                    f'AI scoring working. Tested: {sample_stock.ticker} '
+                    f'({strategy_rating}, score: {wheel_score}/100)'
+                )
+                check['metrics'] = [
+                    {'label': 'Status', 'value': 'Active'},
+                    {'label': 'Ticker Tested', 'value': sample_stock.ticker},
+                    {'label': 'Wheel Score', 'value': f'{wheel_score}/100'},
+                    {'label': 'Rating', 'value': strategy_rating},
+                ]
+                logger.info(f"✅ AI service check passed")
+            elif total_stocks == 0:
+                check['status'] = 'warning'
+                check['message'] = 'AI service ready but no stocks in database yet'
+                check['solution'] = 'Run: python manage.py discover_stocks'
+                check['metrics'] = [{'label': 'Status', 'value': 'No Stocks'}]
+            else:
+                check['status'] = 'warning'
+                check['message'] = f'{total_stocks} stocks in DB but none have price data yet'
+                check['solution'] = 'Run: python manage.py quick_refresh to fetch prices'
+                check['metrics'] = [
+                    {'label': 'Status', 'value': 'No Price Data'},
+                    {'label': 'Total Stocks', 'value': total_stocks},
+                ]
+                logger.warning(f"⚠️ AI service - stocks exist but no price data")
+
+        except ImportError:
+            check['status'] = 'warning'
+            check['message'] = 'AI service module not available'
+            check['solution'] = 'Check apps/ibkr/services/ai_analysis.py exists'
+            check['metrics'] = [{'label': 'Status', 'value': 'Unavailable'}]
+            logger.warning(f"⚠️ AI service import error")
+        except Exception as e:
+            check['status'] = 'warning'
+            check['message'] = f'AI service error: {str(e)[:120]}'
+            check['metrics'] = [{'label': 'Status', 'value': 'Error'}]
+            logger.warning(f"⚠️ AI service check error: {str(e)}")
+
+        self.results['checks'].append(check)
+
+    def check_disk_space(self):
+        """Check disk space and database file size"""
+        import shutil
+        import os
+
+        check = {
+            'name': 'Disk Space & Storage',
+            'status': 'passed',
+            'message': '',
+            'solution': '',
+            'icon': '💾',
+            'metrics': [],
+        }
+
+        try:
+            total, used, free = shutil.disk_usage('.')
+            free_gb = free / (1024 ** 3)
+            used_pct = round(used / total * 100, 1)
+
+            db_size_mb = 0
+            db_path = 'db.sqlite3'
+            if os.path.exists(db_path):
+                db_size_mb = round(os.path.getsize(db_path) / (1024 ** 2), 2)
+
+            if free_gb < 0.5:
+                check['status'] = 'failed'
+                check['message'] = f'Critically low disk space: {free_gb:.1f}GB free ({used_pct}% used)'
+                check['solution'] = 'Free up disk space immediately'
+            elif free_gb < 1.0:
+                check['status'] = 'warning'
+                check['message'] = f'Low disk space: {free_gb:.1f}GB free ({used_pct}% used). DB: {db_size_mb}MB'
+                check['solution'] = 'Consider freeing up disk space soon'
+            else:
+                check['message'] = f'Disk: {free_gb:.1f}GB free ({used_pct}% used). DB: {db_size_mb}MB'
+
+            check['metrics'] = [
+                {'label': 'Free Space', 'value': f'{free_gb:.1f}GB'},
+                {'label': 'Disk Used', 'value': f'{used_pct}%'},
+                {'label': 'DB Size', 'value': f'{db_size_mb}MB'},
+            ]
+            logger.info(f"✅ Disk space check: {check['message']}")
+
+        except Exception as e:
+            check['status'] = 'warning'
+            check['message'] = f'Cannot check disk space: {str(e)[:100]}'
+            logger.warning(f"⚠️ Disk space check error: {str(e)}")
+
+        self.results['checks'].append(check)
+
     def get_quick_status(self) -> Dict:
         """Get simplified status for navbar display"""
         if not self.results['checks']:

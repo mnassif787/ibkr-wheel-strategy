@@ -40,13 +40,12 @@ services:
     ulimits:
       nofile: 10000
     environment:
-      # Dummy credentials so IBC doesn't use default edemo account
-      # Log in manually via noVNC at http://localhost:6080
-      - USERNAME=MANUAL_LOGIN
-      - PASSWORD=MANUAL_LOGIN
+      # Skip auto-login - user must login manually via VNC at http://localhost:6080
+      # Do NOT set USERNAME or PASSWORD - this forces manual login
       - IBC_TradingMode=paper
       - GATEWAY_OR_TWS=gateway
-      - TWOFA_TIMEOUT_ACTION=restart
+      # exit instead of restart — prevents infinite login loop when 2FA times out
+      - TWOFA_TIMEOUT_ACTION=exit
       # Accept incoming API connections automatically (fixes disconnection + enables trading)
       - IBC_AcceptIncomingConnectionAction=accept
       # Allow API clients to submit orders (not read-only)

@@ -1,171 +1,288 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}IB Gateway Control - Wheel Strategy{% endblock %}
+{% block title %}IB Gateway - Wheel Strategy{% endblock %}
 
 {% block content %}
-<div class="max-w-6xl mx-auto">
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+    <!-- Header -->
     <div class="flex justify-between items-center mb-6">
         <div>
-            <h1 class="text-3xl font-bold text-gray-900">IB Gateway Control</h1>
-            <p class="text-gray-600 mt-1">Manage your Interactive Brokers Gateway connection</p>
+            <h1 class="text-3xl font-bold text-gray-900">🔌 IB Gateway Control</h1>
+            <p class="text-gray-500 mt-1 text-sm">
+                Step 1: Log in via VNC &nbsp;→&nbsp; Step 2: API connects automatically
+            </p>
         </div>
-        <a href="{% url 'ibkr:dashboard' %}" class="text-blue-600 hover:text-blue-700">
-            ← Back to Dashboard
-        </a>
+        <a href="{% url 'ibkr:hub' %}" class="text-sm text-blue-600 hover:text-blue-700">← Back to Hub</a>
     </div>
 
-    <!-- Connection Status Card -->
-    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div class="flex items-center justify-between mb-4">
-            <h2 class="text-xl font-semibold text-gray-900">Connection Status</h2>
-            <button onclick="refreshStatus()" class="text-sm text-blue-600 hover:text-blue-700 flex items-center">
-                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Refresh
-            </button>
+    <!-- Connection Flow Banner -->
+    <div class="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-5 py-4 mb-6 text-sm">
+        <div class="flex items-center gap-2 {% if in_docker %}text-green-700{% else %}text-gray-400{% endif %}">
+            <span class="text-lg">🐳</span>
+            <span class="font-medium">Docker Running</span>
+            {% if in_docker %}<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>{% endif %}
         </div>
-
-        <div id="status-container" class="space-y-4">
-            <div class="flex items-center space-x-3">
-                <div id="status-indicator" class="w-4 h-4 rounded-full {% if is_connected %}bg-green-500{% else %}bg-red-500{% endif %} animate-pulse"></div>
-                <span id="status-text" class="text-lg font-medium {% if is_connected %}text-green-600{% else %}text-red-600{% endif %}">
-                    {% if is_connected %}Connected{% else %}Disconnected{% endif %}
-                </span>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t">
-                <div>
-                    <p class="text-sm text-gray-600">Host</p>
-                    <p class="text-lg font-semibold" id="gateway-host">{{ gateway_host }}</p>
-                </div>
-                <div>
-                    <p class="text-sm text-gray-600">Port</p>
-                    <p class="text-lg font-semibold" id="gateway-port">{{ gateway_port }}</p>
-                </div>
-                <div>
-                    <p class="text-sm text-gray-600">Client ID</p>
-                    <p class="text-lg font-semibold" id="client-id">{{ client_id }}</p>
-                </div>
-            </div>
-
-            <div id="accounts-container" class="hidden pt-4 border-t">
-                <p class="text-sm text-gray-600 mb-2">Connected Accounts</p>
-                <div id="accounts-list" class="flex flex-wrap gap-2"></div>
-            </div>
+        <span class="text-gray-300 text-xl">→</span>
+        <div class="flex items-center gap-2 text-gray-700">
+            <span class="text-lg">🖥️</span>
+            <span class="font-medium">Login via VNC</span>
+            <span class="text-gray-400 text-xs">(IBKR credentials + 2FA)</span>
         </div>
-
-        <!-- Action Buttons -->
-        <div class="flex space-x-3 mt-6">
-            <button 
-                id="connect-btn" 
-                onclick="connectGateway()" 
-                class="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200 {% if is_connected %}opacity-50 cursor-not-allowed{% endif %}"
-                {% if is_connected %}disabled{% endif %}>
-                <span class="flex items-center justify-center">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    Connect
-                </span>
-            </button>
-            <button 
-                id="disconnect-btn" 
-                onclick="disconnectGateway()" 
-                class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200 {% if not is_connected %}opacity-50 cursor-not-allowed{% endif %}"
-                {% if not is_connected %}disabled{% endif %}>
-                <span class="flex items-center justify-center">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                    </svg>
-                    Disconnect
-                </span>
-            </button>
+        <span class="text-gray-300 text-xl">→</span>
+        <div class="flex items-center gap-2 {% if is_connected %}text-green-700{% else %}text-gray-400{% endif %}">
+            <span class="text-lg">⚡</span>
+            <span class="font-medium">API Auto-Connects</span>
+            {% if is_connected %}
+            <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+            {% else %}
+            <span class="text-xs text-gray-400">(waiting for login)</span>
+            {% endif %}
         </div>
     </div>
 
-    <!-- Gateway Information -->
-    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-        <h2 class="text-xl font-semibold text-gray-900 mb-4">Gateway Information</h2>
-        <div class="space-y-3 text-sm">
-            <div class="flex items-start">
-                <svg class="w-5 h-5 text-blue-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div>
-                    <p class="font-medium text-gray-900">Docker Container</p>
-                    <p class="text-gray-600">IB Gateway runs in a Docker container for easy deployment</p>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- LEFT: API Status + Controls (1/3 width) -->
+        <div class="space-y-4">
+
+            <!-- API Connection Status -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="font-semibold text-gray-900">API Connection</h2>
+                    <button onclick="refreshStatus()" class="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+
+                <!-- Status Indicator -->
+                <div class="flex items-center gap-3 mb-4">
+                    <div id="status-indicator" class="w-4 h-4 rounded-full animate-pulse
+                        {% if is_connected %}bg-green-500{% else %}bg-red-400{% endif %}"></div>
+                    <span id="status-text" class="text-base font-semibold
+                        {% if is_connected %}text-green-700{% else %}text-red-600{% endif %}">
+                        {% if is_connected %}Connected{% else %}Disconnected{% endif %}
+                    </span>
+                </div>
+
+                <!-- Connection Details -->
+                <div class="space-y-2 text-sm border-t pt-3 mb-4">
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">Host</span>
+                        <span class="font-mono font-medium text-gray-800" id="gateway-host">{{ gateway_host }}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">API Port</span>
+                        <span class="font-mono font-medium text-gray-800" id="gateway-port">{{ gateway_port }}</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">Client ID</span>
+                        <span class="font-mono font-medium text-gray-800" id="client-id">{{ client_id }}</span>
+                    </div>
+                </div>
+
+                <!-- Accounts -->
+                <div id="accounts-container" class="hidden mb-4 border-t pt-3">
+                    <p class="text-xs text-gray-500 mb-2">Accounts</p>
+                    <div id="accounts-list" class="flex flex-wrap gap-1.5"></div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex gap-2">
+                    <button id="connect-btn" onclick="connectGateway()"
+                        class="flex-1 py-2 px-3 text-sm font-medium rounded-lg transition
+                            {% if is_connected %}bg-green-100 text-green-400 cursor-not-allowed{% else %}bg-green-600 hover:bg-green-700 text-white{% endif %}"
+                        {% if is_connected %}disabled{% endif %}>
+                        ⚡ Connect
+                    </button>
+                    <button id="disconnect-btn" onclick="disconnectGateway()"
+                        class="flex-1 py-2 px-3 text-sm font-medium rounded-lg transition
+                            {% if not is_connected %}bg-red-100 text-red-300 cursor-not-allowed{% else %}bg-red-600 hover:bg-red-700 text-white{% endif %}"
+                        {% if not is_connected %}disabled{% endif %}>
+                        ✕ Disconnect
+                    </button>
                 </div>
             </div>
-            <div class="flex items-start">
-                <svg class="w-5 h-5 text-blue-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
-                <div>
-                    <p class="font-medium text-gray-900">VNC Access</p>
-                    <p class="text-gray-600">Connect to port 5900 with a VNC client to view the Gateway UI</p>
-                </div>
+
+            <!-- Env Info -->
+            {% if not in_docker %}
+            <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-sm">
+                <p class="font-semibold text-yellow-800 mb-1">⚠️ Running Locally</p>
+                <p class="text-yellow-700 text-xs">Start Docker first for full IBKR + VNC support:</p>
+                <code class="block mt-2 bg-yellow-100 text-yellow-900 px-2 py-1 rounded text-xs font-mono">docker-compose up -d</code>
             </div>
-            <div class="flex items-start">
-                <svg class="w-5 h-5 text-blue-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-                <div>
-                    <p class="font-medium text-gray-900">Secure Connection</p>
-                    <p class="text-gray-600">API connections are isolated within the Docker network</p>
+            {% else %}
+            <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm">
+                <p class="font-semibold text-green-800 mb-1">✅ Docker Mode Active</p>
+                <p class="text-green-700 text-xs">IB Gateway container is running. Use the VNC panel to log in.</p>
+            </div>
+            {% endif %}
+
+            <!-- Port Reference -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 text-sm">
+                <p class="font-semibold text-gray-800 mb-3">Port Reference</p>
+                <ul class="space-y-1.5 text-xs text-gray-600">
+                    <li class="flex justify-between"><span>🖥️ VNC (noVNC)</span><code class="font-mono">6080</code></li>
+                    <li class="flex justify-between"><span>⚡ API (Docker GW)</span><code class="font-mono">8888</code></li>
+                    <li class="flex justify-between"><span>📄 Paper (TWS)</span><code class="font-mono">7497</code></li>
+                    <li class="flex justify-between"><span>💰 Live (TWS)</span><code class="font-mono">7496</code></li>
+                    <li class="flex justify-between"><span>📄 Paper (GW)</span><code class="font-mono">4002</code></li>
+                    <li class="flex justify-between"><span>💰 Live (GW)</span><code class="font-mono">4001</code></li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- RIGHT: VNC Viewer (2/3 width) -->
+        <div class="lg:col-span-2">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+
+                <!-- VNC Header -->
+                <div class="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
+                    <div class="flex items-center gap-2">
+                        <span class="text-gray-600 font-medium text-sm">🖥️ VNC — IBKR Gateway Login</span>
+                        <span class="text-xs text-gray-400 font-mono">{{ vnc_url }}</span>
+                    </div>
+                    <a href="{{ vnc_url }}" target="_blank"
+                        class="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 border border-blue-200 rounded px-2 py-1">
+                        ↗ Open in new tab
+                    </a>
+                </div>
+
+                <!-- VNC iframe -->
+                <div id="vnc-container" style="height: 540px; position: relative;">
+                    <iframe
+                        id="vnc-iframe"
+                        src="{{ vnc_url }}"
+                        style="width:100%; height:100%; border:0;"
+                        allow="clipboard-read; clipboard-write"
+                        title="IB Gateway VNC">
+                    </iframe>
+
+                    <!-- Offline overlay -->
+                    <div id="vnc-offline" style="display:none; position:absolute; inset:0;"
+                        class="flex flex-col items-center justify-center bg-gray-50 text-center p-8">
+                        <div class="text-5xl mb-4">🔌</div>
+                        <h3 class="text-lg font-semibold text-gray-700 mb-2">VNC Not Available</h3>
+                        <p class="text-gray-500 text-sm mb-4 max-w-xs">
+                            The IB Gateway Docker container is not running or VNC is not accessible at
+                            <code class="font-mono text-blue-600">{{ vnc_url }}</code>
+                        </p>
+                        <div class="text-left bg-gray-900 text-green-400 rounded-lg px-4 py-3 text-xs font-mono w-full max-w-sm">
+                            <div class="text-gray-500 mb-1"># Start the gateway container:</div>
+                            <div>docker-compose up -d ib-gateway</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VNC Tips -->
+                <div class="px-5 py-3 border-t border-gray-100 bg-gray-50">
+                    <div class="flex flex-wrap gap-4 text-xs text-gray-500">
+                        <span>💡 Log in with IBKR credentials in the VNC window</span>
+                        <span>· Complete 2FA when prompted</span>
+                        <span>· API will auto-connect once logged in</span>
+                        <span>· Use paste icon in VNC toolbar to paste password</span>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Quick Start Guide -->
-    <div class="bg-blue-50 rounded-lg p-6">
-        <h3 class="text-lg font-semibold text-blue-900 mb-3">🚀 Quick Start</h3>
-        <ol class="space-y-2 text-sm text-blue-800">
-            <li class="flex items-start">
-                <span class="font-bold mr-2">1.</span>
-                <span>Ensure Docker is running and <code class="bg-blue-100 px-2 py-0.5 rounded">docker-compose up -d</code> has been executed</span>
-            </li>
-            <li class="flex items-start">
-                <span class="font-bold mr-2">2.</span>
-                <span>Configure your IBKR credentials in the <code class="bg-blue-100 px-2 py-0.5 rounded">.env</code> file</span>
-            </li>
-            <li class="flex items-start">
-                <span class="font-bold mr-2">3.</span>
-                <span>Click "Connect" button above to establish connection to IB Gateway</span>
-            </li>
-            <li class="flex items-start">
-                <span class="font-bold mr-2">4.</span>
-                <span>Optionally, use a VNC client to connect to <code class="bg-blue-100 px-2 py-0.5 rounded">localhost:5900</code> to view Gateway UI</span>
-            </li>
-        </ol>
+    <!-- After-Login Setup Guide -->
+    <div class="mt-6 bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3 bg-amber-50 border-b border-amber-200">
+            <h3 class="font-semibold text-amber-900 text-sm">🛠️ After Login — One-Time API Setup &amp; Troubleshooting</h3>
+            <button onclick="document.getElementById('setup-body').classList.toggle('hidden')"
+                class="text-xs text-amber-700 hover:text-amber-900 border border-amber-300 rounded px-2 py-0.5">toggle</button>
+        </div>
+        <div id="setup-body" class="px-5 py-4 grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+
+            <!-- Steps -->
+            <div>
+                <p class="font-semibold text-gray-800 mb-3">Enable API Connections in Gateway UI (do this once inside VNC)</p>
+                <ol class="space-y-2 text-gray-700">
+                    <li class="flex gap-2">
+                        <span class="flex-shrink-0 w-5 h-5 bg-amber-500 text-white rounded-full text-xs flex items-center justify-center font-bold">1</span>
+                        <span>In the VNC window, click <strong>Configure</strong> → <strong>API</strong> → <strong>Settings</strong></span>
+                    </li>
+                    <li class="flex gap-2">
+                        <span class="flex-shrink-0 w-5 h-5 bg-amber-500 text-white rounded-full text-xs flex items-center justify-center font-bold">2</span>
+                        <span>Check ✅ <strong>"Enable ActiveX and Socket Clients"</strong></span>
+                    </li>
+                    <li class="flex gap-2">
+                        <span class="flex-shrink-0 w-5 h-5 bg-amber-500 text-white rounded-full text-xs flex items-center justify-center font-bold">3</span>
+                        <span>In <strong>Trusted IPs</strong>, add <code class="bg-gray-100 px-1 rounded font-mono text-xs">172.0.0.0/8</code> (Docker network), or uncheck <em>"Allow connections from localhost only"</em></span>
+                    </li>
+                    <li class="flex gap-2">
+                        <span class="flex-shrink-0 w-5 h-5 bg-amber-500 text-white rounded-full text-xs flex items-center justify-center font-bold">4</span>
+                        <span>Click <strong>OK</strong>, then come back here and click <strong>⚡ Connect</strong></span>
+                    </li>
+                </ol>
+                <p class="text-xs text-gray-500 mt-3">💡 IB Gateway saves this setting — you only need to do it once per installation.</p>
+            </div>
+
+            <!-- Troubleshooting -->
+            <div>
+                <p class="font-semibold text-gray-800 mb-3">Common Problems</p>
+                <div class="space-y-3">
+                    <div class="bg-red-50 border border-red-200 rounded-lg p-3">
+                        <p class="font-medium text-red-800 text-xs mb-1">🔁 Login dialog keeps reappearing</p>
+                        <p class="text-red-700 text-xs">2FA timed out — complete it within ~60 seconds of it appearing in the VNC window. If stuck in a loop, restart the container:</p>
+                        <code class="block mt-1 bg-red-900 text-red-100 px-2 py-1 rounded text-xs font-mono">docker-compose restart ib-gateway</code>
+                    </div>
+                    <div class="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                        <p class="font-medium text-orange-800 text-xs mb-1">⚠️ API connect fails after login</p>
+                        <p class="text-orange-700 text-xs">Most common cause: <strong>"Enable ActiveX and Socket Clients"</strong> is not checked — follow the 4 steps above. Also look for an <em>"Accept API connection?"</em> popup inside the VNC window and click <strong>Allow</strong>.</p>
+                    </div>
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                        <p class="font-medium text-blue-800 text-xs mb-1">🔵 Existing session / another device logged in</p>
+                        <p class="text-blue-700 text-xs">Log out of all other IBKR sessions first, or dismiss the "Existing session detected" dialog inside the VNC window by selecting <strong>Exit Application</strong> on the other session.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <!-- Message toast -->
+    <div id="toast" class="hidden fixed top-4 right-4 z-50 px-5 py-3 rounded-lg shadow-lg text-white text-sm font-medium"></div>
 </div>
 
 <script>
-    // Auto-refresh status every 10 seconds
-    let autoRefreshInterval;
+    // Detect if VNC iframe fails to load and show offline overlay
+    const iframe = document.getElementById('vnc-iframe');
+    const overlay = document.getElementById('vnc-offline');
 
-    function startAutoRefresh() {
-        autoRefreshInterval = setInterval(refreshStatus, 10000);
-    }
+    iframe.addEventListener('error', () => {
+        overlay.style.display = 'flex';
+        iframe.style.display = 'none';
+    });
 
-    function stopAutoRefresh() {
-        if (autoRefreshInterval) {
-            clearInterval(autoRefreshInterval);
+    // After 8 seconds, if iframe is blank (no title set by noVNC), treat as offline
+    setTimeout(() => {
+        try {
+            // If iframe loaded correctly, noVNC sets the document title
+            if (iframe.contentDocument && iframe.contentDocument.title === '') {
+                overlay.style.display = 'flex';
+                iframe.style.display = 'none';
+            }
+        } catch (e) {
+            // Cross-origin: means the iframe loaded (noVNC is running) — keep it
         }
-    }
+    }, 8000);
+
+    // Auto-refresh API status every 60s (reduce hammering when gateway disconnected)
+    setInterval(refreshStatus, 60000);
 
     async function refreshStatus() {
         try {
-            const response = await fetch("{% url 'ibkr:gateway_status_api' %}");
-            const data = await response.json();
-            
+            const res = await fetch("{% url 'ibkr:gateway_status_api' %}");
+            const data = await res.json();
             updateStatusUI(data);
-        } catch (error) {
-            console.error('Error fetching status:', error);
+        } catch (e) {
+            console.warn('Status refresh failed:', e);
         }
     }
 
@@ -180,125 +297,74 @@
         if (data.connected) {
             indicator.className = 'w-4 h-4 rounded-full bg-green-500 animate-pulse';
             statusText.textContent = 'Connected';
-            statusText.className = 'text-lg font-medium text-green-600';
+            statusText.className = 'text-base font-semibold text-green-700';
             connectBtn.disabled = true;
-            connectBtn.className = 'flex-1 bg-green-600 text-white font-semibold py-3 px-6 rounded-lg opacity-50 cursor-not-allowed';
+            connectBtn.className = 'flex-1 py-2 px-3 text-sm font-medium rounded-lg bg-green-100 text-green-400 cursor-not-allowed';
             disconnectBtn.disabled = false;
-            disconnectBtn.className = 'flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200';
-
-            // Show accounts if available
+            disconnectBtn.className = 'flex-1 py-2 px-3 text-sm font-medium rounded-lg bg-red-600 hover:bg-red-700 text-white transition';
             if (data.accounts && data.accounts.length > 0) {
                 accountsContainer.classList.remove('hidden');
-                accountsList.innerHTML = data.accounts.map(acc => 
-                    `<span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">${acc}</span>`
+                accountsList.innerHTML = data.accounts.map(a =>
+                    `<span class="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded-full font-mono">${a}</span>`
                 ).join('');
             }
         } else {
-            indicator.className = 'w-4 h-4 rounded-full bg-red-500 animate-pulse';
+            indicator.className = 'w-4 h-4 rounded-full bg-red-400 animate-pulse';
             statusText.textContent = 'Disconnected';
-            statusText.className = 'text-lg font-medium text-red-600';
+            statusText.className = 'text-base font-semibold text-red-600';
             connectBtn.disabled = false;
-            connectBtn.className = 'flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition duration-200';
+            connectBtn.className = 'flex-1 py-2 px-3 text-sm font-medium rounded-lg bg-green-600 hover:bg-green-700 text-white transition';
             disconnectBtn.disabled = true;
-            disconnectBtn.className = 'flex-1 bg-red-600 text-white font-semibold py-3 px-6 rounded-lg opacity-50 cursor-not-allowed';
+            disconnectBtn.className = 'flex-1 py-2 px-3 text-sm font-medium rounded-lg bg-red-100 text-red-300 cursor-not-allowed';
             accountsContainer.classList.add('hidden');
         }
     }
 
     async function connectGateway() {
-        const connectBtn = document.getElementById('connect-btn');
-        const originalText = connectBtn.innerHTML;
-        
-        connectBtn.innerHTML = '<span class="flex items-center justify-center"><svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Connecting...</span>';
-        connectBtn.disabled = true;
-
+        const btn = document.getElementById('connect-btn');
+        btn.textContent = '⏳ Connecting...';
+        btn.disabled = true;
         try {
-            const response = await fetch("{% url 'ibkr:gateway_connect_api' %}", {
+            const res = await fetch("{% url 'ibkr:gateway_connect_api' %}", {
                 method: 'POST',
-                headers: {
-                    'X-CSRFToken': '{{ csrf_token }}',
-                }
+                headers: {'X-CSRFToken': '{{ csrf_token }}'}
             });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                showMessage('success', data.message);
-                // Wait a bit for connection to establish
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                await refreshStatus();
-                // Restore button text after refresh
-                connectBtn.innerHTML = originalText;
-            } else {
-                showMessage('error', data.message || 'Failed to connect');
-                connectBtn.innerHTML = originalText;
-                connectBtn.disabled = false;
-            }
-        } catch (error) {
-            showMessage('error', 'Connection error: ' + error.message);
-            connectBtn.innerHTML = originalText;
-            connectBtn.disabled = false;
+            const data = await res.json();
+            showToast(data.success ? 'success' : 'error', data.message || (data.success ? 'Connected!' : 'Failed to connect'));
+            setTimeout(refreshStatus, 1000);
+        } catch (e) {
+            showToast('error', 'Connection error: ' + e.message);
         }
+        btn.textContent = '⚡ Connect';
     }
 
     async function disconnectGateway() {
-        const disconnectBtn = document.getElementById('disconnect-btn');
-        const originalText = disconnectBtn.innerHTML;
-        
-        disconnectBtn.innerHTML = '<span class="flex items-center justify-center"><svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Disconnecting...</span>';
-        disconnectBtn.disabled = true;
-
+        const btn = document.getElementById('disconnect-btn');
+        btn.textContent = '⏳ Disconnecting...';
+        btn.disabled = true;
         try {
-            const response = await fetch("{% url 'ibkr:gateway_disconnect_api' %}", {
+            const res = await fetch("{% url 'ibkr:gateway_disconnect_api' %}", {
                 method: 'POST',
-                headers: {
-                    'X-CSRFToken': '{{ csrf_token }}',
-                }
+                headers: {'X-CSRFToken': '{{ csrf_token }}'}
             });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                showMessage('success', data.message);
-                await refreshStatus();
-            } else {
-                showMessage('error', 'Failed to disconnect');
-                disconnectBtn.innerHTML = originalText;
-                disconnectBtn.disabled = false;
-            }
-        } catch (error) {
-            showMessage('error', 'Disconnection error: ' + error.message);
-            disconnectBtn.innerHTML = originalText;
-            disconnectBtn.disabled = false;
+            const data = await res.json();
+            showToast(data.success ? 'success' : 'error', data.message || 'Disconnected');
+            setTimeout(refreshStatus, 500);
+        } catch (e) {
+            showToast('error', 'Error: ' + e.message);
         }
+        btn.textContent = '✕ Disconnect';
     }
 
-    function showMessage(type, message) {
-        // Create a simple toast notification
-        const toast = document.createElement('div');
-        toast.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg text-white z-50 ${
+    function showToast(type, msg) {
+        const toast = document.getElementById('toast');
+        toast.textContent = msg;
+        toast.className = `fixed top-4 right-4 z-50 px-5 py-3 rounded-lg shadow-lg text-white text-sm font-medium ${
             type === 'success' ? 'bg-green-600' : 'bg-red-600'
         }`;
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        
-        setTimeout(() => {
-            toast.remove();
-        }, 4000);
+        toast.classList.remove('hidden');
+        setTimeout(() => toast.classList.add('hidden'), 4000);
     }
-
-    // Start auto-refresh when page loads
-    document.addEventListener('DOMContentLoaded', function() {
-        startAutoRefresh();
-    });
-
-    // Stop auto-refresh when page is hidden
-    document.addEventListener('visibilitychange', function() {
-        if (document.hidden) {
-            stopAutoRefresh();
-        } else {
-            startAutoRefresh();
-        }
-    });
 </script>
 {% endblock %}
+

@@ -12,107 +12,188 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Per-process singleton to maintain connection across requests
-# Each gunicorn worker is a separate process with its own globals
+# ---------------------------------------------------------------------------
+# Dedicated IB worker thread
+# ---------------------------------------------------------------------------
+# ib_insync sync wrappers (qualifyContracts, placeOrder, sleep …) call
+# asyncio.get_event_loop().run_until_complete() internally.
+# That call raises "This event loop is already running" if the loop is live
+# (e.g. run_forever).  It also raises "no current event loop" in Django
+# request threads (Python 3.10+).
+#
+# Fix: one permanent worker thread with its OWN event loop that is idle
+# between operations.  All IB work is serialised through a queue, so
+# get_event_loop() always returns a valid, non-running loop and
+# run_until_complete() succeeds.
+# ---------------------------------------------------------------------------
+
+import queue as _queue
+
+_work_queue: _queue.Queue = _queue.Queue()
+_ib_worker_thread = None
+_ib_worker_lock = threading.Lock()
+_ib_worker_loop = None   # set by the worker thread
+
+
+def _ib_worker():
+    """Permanent background thread: owns the asyncio event loop for ib_insync."""
+    global _ib_worker_loop
+    _ib_worker_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_ib_worker_loop)
+
+    while True:
+        fn, args, kwargs, promise = _work_queue.get()
+        try:
+            promise['result'] = fn(*args, **kwargs)
+        except Exception as exc:
+            promise['error'] = exc
+        finally:
+            promise['done'].set()
+
+
+def _ensure_ib_worker():
+    global _ib_worker_thread
+    with _ib_worker_lock:
+        if _ib_worker_thread is None or not _ib_worker_thread.is_alive():
+            _ib_worker_thread = threading.Thread(
+                target=_ib_worker, daemon=True, name='ibkr-worker'
+            )
+            _ib_worker_thread.start()
+            logger.info('🔁 IBKR worker thread started')
+
+
+def _ib_run(fn, *args, timeout: int = 30, **kwargs):
+    """
+    Submit *fn(*args, **kwargs)* to the IB worker thread and block until done.
+    Returns the result or re-raises any exception raised inside fn.
+    """
+    _ensure_ib_worker()
+    promise = {'result': None, 'error': None, 'done': threading.Event()}
+    _work_queue.put((fn, args, kwargs, promise))
+    if not promise['done'].wait(timeout=timeout):
+        raise TimeoutError(f'IB operation timed out after {timeout}s')
+    if promise['error']:
+        raise promise['error']
+    return promise['result']
+
+
+# Per-process singleton IB instance (lives on the event-loop thread)
 _ib_instance = None
 _connection_lock = threading.Lock()
 _last_connect_attempt = 0
-_RECONNECT_COOLDOWN = 3  # seconds between reconnect attempts
+_RECONNECT_COOLDOWN = 15   # minimum seconds between reconnect attempts
+_consecutive_failures = 0
+_MAX_FAILURE_COOLDOWN = 120  # seconds to wait after repeated failures
 
 
 class IBKRClient:
     """Interactive Brokers API client wrapper"""
-    
+
     def __init__(self, client_id=None):
         global _ib_instance
+        # Create the IB singleton IN the event-loop thread so its internal
+        # loop reference is set correctly.
         with _connection_lock:
             if _ib_instance is None:
-                _ib_instance = IB()
+                _ib_instance = _ib_run(IB)
         self.ib = _ib_instance
         self.host = settings.IBKR_HOST
         self.port = settings.IBKR_PORT
-        # Use process-unique client ID to avoid conflicts across gunicorn workers
         pid = os.getpid()
-        self.client_id = client_id or (settings.IBKR_CLIENT_ID + (pid % 32))
+        # Use a fixed clientId so the gateway shows only one tab and the
+        # exponential backoff gives it time to release the slot between retries.
+        self.client_id = client_id or settings.IBKR_CLIENT_ID
         self.connected = False
     
-    def _ensure_event_loop(self):
-        """Ensure a working event loop exists for the current thread."""
+    # ------------------------------------------------------------------
+    # Internal helpers that run on the event-loop thread
+    # ------------------------------------------------------------------
+
+    def _do_connect(self):
+        """Called on the event-loop thread: create fresh IB, connect, set data type."""
+        global _ib_instance
+        # Use the fixed clientId set at init — the exponential backoff gives the
+        # gateway enough time to release the old slot, so we don't need a new id
+        # each attempt (which was creating a ghost tab for every failed retry).
+        logger.info(f'🔌 Trying clientId={self.client_id}')
+        ib = IB()
+        ib.connect(self.host, self.port, clientId=self.client_id, timeout=10, readonly=False)
+        ib.reqMarketDataType(3)
+        _ib_instance = ib
+        self.ib = ib
+
+    def _do_disconnect(self):
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                raise RuntimeError("closed loop")
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        return loop
-    
-    def connect(self):
-        """Connect to TWS/Gateway with auto-reconnect logic"""
-        global _last_connect_attempt
-        
-        with _connection_lock:
-            try:
-                # If already connected and connection is alive, reuse it
-                if self.ib.isConnected():
-                    self.connected = True
-                    return True
-                
-                # Cooldown to prevent hammering the gateway
-                now = time.time()
-                if now - _last_connect_attempt < _RECONNECT_COOLDOWN:
-                    logger.debug("Skipping reconnect (cooldown)")
-                    return False
-                _last_connect_attempt = now
-                
-                # Disconnect stale connection before reconnecting
-                try:
-                    self.ib.disconnect()
-                except Exception:
-                    pass
-                
-                # Reset the IB instance for a clean reconnect
-                global _ib_instance
-                _ib_instance = IB()
-                self.ib = _ib_instance
-                
-                loop = self._ensure_event_loop()
-                
-                logger.info(f"🔄 Connecting to IBKR at {self.host}:{self.port} (clientId={self.client_id}, pid={os.getpid()})")
-                
-                loop.run_until_complete(
-                    self.ib.connectAsync(self.host, self.port, clientId=self.client_id, timeout=10, readonly=False)
-                )
-                
-                self.connected = True
-                # Request delayed market data (type 3) as fallback
-                # This works without paid real-time subscriptions
-                self.ib.reqMarketDataType(3)
-                logger.info(f"✅ Connected to IBKR at {self.host}:{self.port} (delayed data enabled)")
-                return True
-                
-            except Exception as e:
-                logger.warning(f"❌ Failed to connect to IBKR: {e}")
-                self.connected = False
-                return False
-    
-    def disconnect(self):
-        """Disconnect from TWS/Gateway"""
-        if self.connected:
-            try:
-                self.ib.disconnect()
-            except Exception:
-                pass
-            self.connected = False
-            logger.info("Disconnected from IBKR")
-    
-    def is_connected(self):
-        """Check if connected to IBKR"""
+            self.ib.disconnect()
+        except Exception:
+            pass
+
+    def _do_is_connected(self):
         try:
             return self.ib.isConnected()
         except Exception:
             return False
-    
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def connect(self):
+        """Connect to TWS/Gateway with auto-reconnect logic"""
+        global _last_connect_attempt, _consecutive_failures
+
+        with _connection_lock:
+            try:
+                # If already connected and alive, reuse
+                if _ib_run(self._do_is_connected):
+                    self.connected = True
+                    _consecutive_failures = 0
+                    return True
+
+                # Cooldown — back off longer after repeated failures
+                now = time.time()
+                cooldown = min(
+                    _RECONNECT_COOLDOWN * (2 ** min(_consecutive_failures, 3)),
+                    _MAX_FAILURE_COOLDOWN
+                )
+                if now - _last_connect_attempt < cooldown:
+                    logger.debug(f'Skipping reconnect (cooldown {cooldown:.0f}s, failures={_consecutive_failures})')
+                    return False
+                _last_connect_attempt = now
+
+                # Disconnect stale connection
+                _ib_run(self._do_disconnect)
+
+                logger.info(
+                    f'🔄 Connecting to IBKR at {self.host}:{self.port} '
+                    f'(pid={os.getpid()})'
+                )
+
+                # All IB construction + connect happen inside the event-loop thread
+                _ib_run(self._do_connect)
+
+                self.connected = True
+                _consecutive_failures = 0
+                logger.info(f'✅ Connected to IBKR at {self.host}:{self.port} clientId={self.client_id} (delayed data enabled)')
+                return True
+
+            except Exception as e:
+                _consecutive_failures += 1
+                logger.warning(f'❌ Failed to connect to IBKR: {e} (failure #{_consecutive_failures})')
+                self.connected = False
+                return False
+
+    def disconnect(self):
+        """Disconnect from TWS/Gateway"""
+        if self.connected:
+            _ib_run(self._do_disconnect)
+            self.connected = False
+            logger.info("Disconnected from IBKR")
+
+    def is_connected(self):
+        """Check if connected to IBKR"""
+        return _ib_run(self._do_is_connected)
+
     def ensure_connected(self):
         """Ensure connection is active, reconnect if needed. Returns True if connected."""
         if self.is_connected():
@@ -133,22 +214,19 @@ class IBKRClient:
         """
         return Stock(ticker, exchange, currency)
     
+    # ------------------------------------------------------------------
+    # get_stock_price
+    # ------------------------------------------------------------------
     def get_stock_price(self, ticker):
-        """
-        Get current stock price
-        
-        Args:
-            ticker: Stock symbol
-        
-        Returns:
-            dict with price data or None if failed
-        """
+        """Get current stock price"""
+        return _ib_run(self._get_stock_price_impl, ticker)
+
+    def _get_stock_price_impl(self, ticker):
         try:
             contract = self.get_stock_contract(ticker)
             self.ib.qualifyContracts(contract)
             ticker_obj = self.ib.reqMktData(contract, '', False, False)
-            self.ib.sleep(2)  # Wait for data
-            
+            self.ib.sleep(2)
             data = {
                 'ticker': ticker,
                 'last': ticker_obj.last,
@@ -157,84 +235,56 @@ class IBKRClient:
                 'close': ticker_obj.close,
                 'volume': ticker_obj.volume,
             }
-            
             self.ib.cancelMktData(contract)
             return data
-            
         except Exception as e:
             logger.error(f"Error fetching price for {ticker}: {e}")
             return None
     
+    # ------------------------------------------------------------------
+    # get_option_chain
+    # ------------------------------------------------------------------
     def get_option_chain(self, ticker, expiry=None, strike=None):
-        """
-        Get options chain for a stock
-        
-        Args:
-            ticker: Stock symbol
-            expiry: Optional expiry date filter (YYYYMMDD)
-            strike: Optional strike price filter
-        
-        Returns:
-            list of option contracts
-        """
+        """Get options chain for a stock"""
+        return _ib_run(self._get_option_chain_impl, ticker, expiry, strike)
+
+    def _get_option_chain_impl(self, ticker, expiry=None, strike=None):
         try:
             stock_contract = self.get_stock_contract(ticker)
             self.ib.qualifyContracts(stock_contract)
-            
-            # Get option chain details
             chains = self.ib.reqSecDefOptParams(
-                stock_contract.symbol,
-                '',
-                stock_contract.secType,
-                stock_contract.conId
+                stock_contract.symbol, '', stock_contract.secType, stock_contract.conId
             )
-            
             if not chains:
                 logger.warning(f"No options chain found for {ticker}")
                 return []
-            
             chain = chains[0]
-            
-            # Filter strikes if needed
             strikes = chain.strikes
             if strike:
                 strikes = [s for s in strikes if abs(s - strike) < 5]
-            
-            # Filter expirations if needed
             expirations = chain.expirations
             if expiry:
                 expirations = [exp for exp in expirations if exp == expiry]
-            
-            # Create option contracts
             options = []
-            for exp in expirations[:5]:  # Limit to next 5 expirations
+            for exp in expirations[:5]:
                 for strike_price in strikes:
-                    # Put option
-                    put = Option(ticker, exp, strike_price, 'P', 'SMART')
-                    options.append(put)
-            
-            # Qualify contracts
-            qualified = self.ib.qualifyContracts(*options)
-            return qualified
-            
+                    options.append(Option(ticker, exp, strike_price, 'P', 'SMART'))
+            return self.ib.qualifyContracts(*options)
         except Exception as e:
             logger.error(f"Error fetching option chain for {ticker}: {e}")
             return []
     
+    # ------------------------------------------------------------------
+    # get_option_greeks
+    # ------------------------------------------------------------------
     def get_option_greeks(self, option_contract):
-        """
-        Get Greeks for an option contract
-        
-        Args:
-            option_contract: Option contract object
-        
-        Returns:
-            dict with Greeks data
-        """
+        """Get Greeks for an option contract"""
+        return _ib_run(self._get_option_greeks_impl, option_contract)
+
+    def _get_option_greeks_impl(self, option_contract):
         try:
             ticker_obj = self.ib.reqMktData(option_contract, '', False, False)
             self.ib.sleep(2)
-            
             greeks = {
                 'delta': ticker_obj.modelGreeks.delta if ticker_obj.modelGreeks else None,
                 'gamma': ticker_obj.modelGreeks.gamma if ticker_obj.modelGreeks else None,
@@ -242,16 +292,20 @@ class IBKRClient:
                 'vega': ticker_obj.modelGreeks.vega if ticker_obj.modelGreeks else None,
                 'iv': ticker_obj.modelGreeks.impliedVol if ticker_obj.modelGreeks else None,
             }
-            
             self.ib.cancelMktData(option_contract)
             return greeks
-            
         except Exception as e:
             logger.error(f"Error fetching Greeks: {e}")
             return None
     
+    # ------------------------------------------------------------------
+    # get_account_summary
+    # ------------------------------------------------------------------
     def get_account_summary(self):
         """Get account summary"""
+        return _ib_run(self._get_account_summary_impl)
+
+    def _get_account_summary_impl(self):
         try:
             account_values = self.ib.accountSummary()
             summary = {}
@@ -262,13 +316,14 @@ class IBKRClient:
             logger.error(f"Error fetching account summary: {e}")
             return {}
     
+    # ------------------------------------------------------------------
+    # get_portfolio_positions
+    # ------------------------------------------------------------------
     def get_portfolio_positions(self):
-        """
-        Get all portfolio positions (stocks and options)
-        
-        Returns:
-            dict with 'stocks' and 'options' lists
-        """
+        """Get all portfolio positions (stocks and options)"""
+        return _ib_run(self._get_portfolio_positions_impl)
+
+    def _get_portfolio_positions_impl(self):
         try:
             positions = self.ib.positions()
             
@@ -321,13 +376,14 @@ class IBKRClient:
             logger.exception("Full traceback:")
             return {'stocks': [], 'options': []}
     
+    # ------------------------------------------------------------------
+    # get_open_orders
+    # ------------------------------------------------------------------
     def get_open_orders(self):
-        """
-        Get all open orders
-        
-        Returns:
-            list of open orders
-        """
+        """Get all open orders"""
+        return _ib_run(self._get_open_orders_impl)
+
+    def _get_open_orders_impl(self):
         try:
             trades = self.ib.openTrades()
             orders = []
@@ -364,45 +420,29 @@ class IBKRClient:
             logger.error(f"Error fetching open orders: {e}")
             return []
     
+    # ------------------------------------------------------------------
+    # sell_option
+    # ------------------------------------------------------------------
     def sell_option(self, ticker, expiry, strike, right, quantity=1, order_type='LMT', limit_price=None):
-        """
-        Sell (write) an option contract - core of the wheel strategy.
-        
-        Args:
-            ticker: Stock symbol (e.g., 'AAPL')
-            expiry: Expiration date string (YYYYMMDD)
-            strike: Strike price
-            right: 'P' for put, 'C' for call
-            quantity: Number of contracts to sell
-            order_type: 'LMT' for limit or 'MKT' for market
-            limit_price: Limit price per share (required for LMT orders)
-        
-        Returns:
-            dict with order details or error
-        """
+        """Sell (write) an option contract – core of the wheel strategy."""
+        return _ib_run(self._sell_option_impl, ticker, expiry, strike, right, quantity, order_type, limit_price)
+
+    def _sell_option_impl(self, ticker, expiry, strike, right, quantity=1, order_type='LMT', limit_price=None):
         try:
-            # Create and qualify the option contract
             contract = Option(ticker, expiry, strike, right, 'SMART')
             qualified = self.ib.qualifyContracts(contract)
             if not qualified:
                 return {'success': False, 'error': f'Could not qualify option contract {ticker} {expiry} {strike} {right}'}
-            
             contract = qualified[0]
-            
-            # Create the order (SELL = write the option)
             if order_type == 'MKT':
                 order = MarketOrder('SELL', quantity)
             else:
                 if limit_price is None:
                     return {'success': False, 'error': 'Limit price required for limit orders'}
                 order = LimitOrder('SELL', quantity, limit_price)
-            
-            # Place the order
             trade = self.ib.placeOrder(contract, order)
-            self.ib.sleep(1)  # Wait for order acknowledgement
-            
+            self.ib.sleep(1)
             logger.info(f"✅ Placed SELL order: {ticker} {expiry} ${strike} {right} x{quantity} @ {order_type} {limit_price or 'MKT'}")
-            
             return {
                 'success': True,
                 'order_id': trade.order.orderId,
@@ -416,47 +456,33 @@ class IBKRClient:
                 'order_type': order_type,
                 'limit_price': limit_price,
             }
-            
         except Exception as e:
             logger.error(f"❌ Error placing sell order: {e}")
             return {'success': False, 'error': str(e)}
     
+    # ------------------------------------------------------------------
+    # buy_option
+    # ------------------------------------------------------------------
     def buy_option(self, ticker, expiry, strike, right, quantity=1, order_type='LMT', limit_price=None):
-        """
-        Buy an option contract (to close a short position).
-        
-        Args:
-            ticker: Stock symbol
-            expiry: Expiration date string (YYYYMMDD)
-            strike: Strike price
-            right: 'P' for put, 'C' for call
-            quantity: Number of contracts
-            order_type: 'LMT' or 'MKT'
-            limit_price: Limit price per share (required for LMT)
-        
-        Returns:
-            dict with order details or error
-        """
+        """Buy an option contract (to close a short position)."""
+        return _ib_run(self._buy_option_impl, ticker, expiry, strike, right, quantity, order_type, limit_price)
+
+    def _buy_option_impl(self, ticker, expiry, strike, right, quantity=1, order_type='LMT', limit_price=None):
         try:
             contract = Option(ticker, expiry, strike, right, 'SMART')
             qualified = self.ib.qualifyContracts(contract)
             if not qualified:
-                return {'success': False, 'error': f'Could not qualify option contract'}
-            
+                return {'success': False, 'error': 'Could not qualify option contract'}
             contract = qualified[0]
-            
             if order_type == 'MKT':
                 order = MarketOrder('BUY', quantity)
             else:
                 if limit_price is None:
                     return {'success': False, 'error': 'Limit price required for limit orders'}
                 order = LimitOrder('BUY', quantity, limit_price)
-            
             trade = self.ib.placeOrder(contract, order)
             self.ib.sleep(1)
-            
             logger.info(f"✅ Placed BUY order: {ticker} {expiry} ${strike} {right} x{quantity} @ {order_type} {limit_price or 'MKT'}")
-            
             return {
                 'success': True,
                 'order_id': trade.order.orderId,
@@ -470,40 +496,30 @@ class IBKRClient:
                 'order_type': order_type,
                 'limit_price': limit_price,
             }
-            
         except Exception as e:
             logger.error(f"❌ Error placing buy order: {e}")
             return {'success': False, 'error': str(e)}
     
+    # ------------------------------------------------------------------
+    # buy_stock
+    # ------------------------------------------------------------------
     def buy_stock(self, ticker, quantity, order_type='LMT', limit_price=None):
-        """
-        Buy stock shares (e.g., after assignment or to start covered calls).
-        
-        Args:
-            ticker: Stock symbol
-            quantity: Number of shares
-            order_type: 'LMT' or 'MKT'
-            limit_price: Limit price per share
-        
-        Returns:
-            dict with order details or error
-        """
+        """Buy stock shares."""
+        return _ib_run(self._buy_stock_impl, ticker, quantity, order_type, limit_price)
+
+    def _buy_stock_impl(self, ticker, quantity, order_type='LMT', limit_price=None):
         try:
             contract = self.get_stock_contract(ticker)
             self.ib.qualifyContracts(contract)
-            
             if order_type == 'MKT':
                 order = MarketOrder('BUY', quantity)
             else:
                 if limit_price is None:
                     return {'success': False, 'error': 'Limit price required for limit orders'}
                 order = LimitOrder('BUY', quantity, limit_price)
-            
             trade = self.ib.placeOrder(contract, order)
             self.ib.sleep(1)
-            
             logger.info(f"✅ Placed BUY STOCK order: {ticker} x{quantity} @ {order_type} {limit_price or 'MKT'}")
-            
             return {
                 'success': True,
                 'order_id': trade.order.orderId,
@@ -515,40 +531,30 @@ class IBKRClient:
                 'limit_price': limit_price,
                 'sec_type': 'STK',
             }
-            
         except Exception as e:
             logger.error(f"❌ Error placing stock buy order: {e}")
             return {'success': False, 'error': str(e)}
     
+    # ------------------------------------------------------------------
+    # sell_stock
+    # ------------------------------------------------------------------
     def sell_stock(self, ticker, quantity, order_type='LMT', limit_price=None):
-        """
-        Sell stock shares.
-        
-        Args:
-            ticker: Stock symbol
-            quantity: Number of shares
-            order_type: 'LMT' or 'MKT'
-            limit_price: Limit price per share
-        
-        Returns:
-            dict with order details or error
-        """
+        """Sell stock shares."""
+        return _ib_run(self._sell_stock_impl, ticker, quantity, order_type, limit_price)
+
+    def _sell_stock_impl(self, ticker, quantity, order_type='LMT', limit_price=None):
         try:
             contract = self.get_stock_contract(ticker)
             self.ib.qualifyContracts(contract)
-            
             if order_type == 'MKT':
                 order = MarketOrder('SELL', quantity)
             else:
                 if limit_price is None:
                     return {'success': False, 'error': 'Limit price required for limit orders'}
                 order = LimitOrder('SELL', quantity, limit_price)
-            
             trade = self.ib.placeOrder(contract, order)
             self.ib.sleep(1)
-            
             logger.info(f"✅ Placed SELL STOCK order: {ticker} x{quantity} @ {order_type} {limit_price or 'MKT'}")
-            
             return {
                 'success': True,
                 'order_id': trade.order.orderId,
@@ -560,21 +566,18 @@ class IBKRClient:
                 'limit_price': limit_price,
                 'sec_type': 'STK',
             }
-            
         except Exception as e:
             logger.error(f"❌ Error placing stock sell order: {e}")
             return {'success': False, 'error': str(e)}
     
+    # ------------------------------------------------------------------
+    # cancel_order
+    # ------------------------------------------------------------------
     def cancel_order(self, order_id):
-        """
-        Cancel an open order.
-        
-        Args:
-            order_id: The order ID to cancel
-        
-        Returns:
-            dict with cancellation result
-        """
+        """Cancel an open order."""
+        return _ib_run(self._cancel_order_impl, order_id)
+
+    def _cancel_order_impl(self, order_id):
         try:
             trades = self.ib.openTrades()
             for trade in trades:
@@ -583,32 +586,22 @@ class IBKRClient:
                     self.ib.sleep(1)
                     logger.info(f"✅ Cancelled order {order_id}")
                     return {'success': True, 'order_id': order_id, 'message': 'Order cancelled'}
-            
             return {'success': False, 'error': f'Order {order_id} not found in open orders'}
-            
         except Exception as e:
             logger.error(f"❌ Error cancelling order {order_id}: {e}")
             return {'success': False, 'error': str(e)}
     
+    # ------------------------------------------------------------------
+    # get_option_quote
+    # ------------------------------------------------------------------
     def get_option_quote(self, ticker, expiry, strike, right):
-        """
-        Get a live or delayed quote for a specific option contract.
-        Uses reqMarketDataType(3) for delayed data (free, no subscription needed).
-        In ib_insync, delayed data populates the same bid/ask/last fields.
-        
-        Args:
-            ticker: Stock symbol
-            expiry: Expiration date (YYYYMMDD)
-            strike: Strike price
-            right: 'P' or 'C'
-        
-        Returns:
-            dict with bid/ask/last/mid or None
-        """
+        """Get a live or delayed quote for a specific option contract."""
+        return _ib_run(self._get_option_quote_impl, ticker, expiry, strike, right, timeout=40)
+
+    def _get_option_quote_impl(self, ticker, expiry, strike, right):
         import math
-        
+
         def _is_valid(val):
-            """Check if a price value is valid (not None, not NaN, not -1, > 0)."""
             if val is None:
                 return False
             try:
@@ -617,59 +610,35 @@ class IBKRClient:
             except (TypeError, ValueError):
                 return False
             return val > 0
-        
+
         try:
-            # Request delayed market data (type 3) - free, no subscription needed
-            # Must be called BEFORE reqMktData. Delayed data fills same bid/ask/last fields.
             self.ib.reqMarketDataType(3)
-            
             contract = Option(ticker, expiry, strike, right, 'SMART')
             qualified = self.ib.qualifyContracts(contract)
             if not qualified:
                 logger.warning(f"Could not qualify contract: {ticker} {expiry} {strike} {right}")
                 return None
-            
             contract = qualified[0]
             logger.info(f"📊 Requesting quote for {contract.localSymbol} (conId={contract.conId})")
-            
             ticker_obj = self.ib.reqMktData(contract, '', False, False)
-            
-            # Wait for data to arrive - poll up to ~5 seconds
             for i in range(10):
                 self.ib.sleep(0.5)
-                # Log raw values for debugging
-                if i == 2 or i == 5 or i == 9:
-                    logger.info(f"  Poll {i}: bid={ticker_obj.bid} ask={ticker_obj.ask} last={ticker_obj.last} close={ticker_obj.close} modelGreeks={ticker_obj.modelGreeks}")
-                # Check if any useful data arrived
+                if i in (2, 5, 9):
+                    logger.info(f"  Poll {i}: bid={ticker_obj.bid} ask={ticker_obj.ask} last={ticker_obj.last}")
                 if _is_valid(ticker_obj.bid) or _is_valid(ticker_obj.ask) or _is_valid(ticker_obj.last) or _is_valid(ticker_obj.close):
                     break
-            
-            bid = ticker_obj.bid if _is_valid(ticker_obj.bid) else None
-            ask = ticker_obj.ask if _is_valid(ticker_obj.ask) else None
-            last = ticker_obj.last if _is_valid(ticker_obj.last) else None
+            bid   = ticker_obj.bid   if _is_valid(ticker_obj.bid)   else None
+            ask   = ticker_obj.ask   if _is_valid(ticker_obj.ask)   else None
+            last  = ticker_obj.last  if _is_valid(ticker_obj.last)  else None
             close = ticker_obj.close if _is_valid(ticker_obj.close) else None
-            
-            mid = round((bid + ask) / 2, 2) if bid and ask else None
-            
-            # Use close price as fallback for last
+            mid   = round((bid + ask) / 2, 2) if bid and ask else None
             if last is None and close is not None:
                 last = close
-            
             volume = ticker_obj.volume if _is_valid(ticker_obj.volume) else 0
-            
-            data = {
-                'bid': bid,
-                'ask': ask,
-                'last': last,
-                'mid': mid,
-                'volume': volume,
-            }
-            
+            data = {'bid': bid, 'ask': ask, 'last': last, 'mid': mid, 'volume': volume}
             logger.info(f"✅ Option quote for {ticker} {expiry} {strike}{right}: {data}")
-            
             self.ib.cancelMktData(contract)
             return data
-            
         except Exception as e:
             logger.error(f"❌ Error fetching option quote for {ticker} {expiry} {strike} {right}: {e}")
             return None

@@ -91,6 +91,130 @@
         <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold">Add Stock</button>
     </form>
 
+    <!-- Account Summary (loaded async) -->
+    <div id="acct-bar" class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-4">
+        <!-- Loading skeleton shown initially -->
+        <div id="acct-loading" class="flex items-center gap-3 text-sm text-gray-400">
+            <svg class="animate-spin h-4 w-4 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Loading account summary from IBKR…
+        </div>
+        <!-- Populated by JS -->
+        <div id="acct-data" class="hidden">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-bold text-gray-700 uppercase tracking-wide">💼 IBKR Account Summary <span id="acct-currency" class="text-xs font-normal text-gray-400 normal-case ml-1"></span></h3>
+                <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                    <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block"></span>Live
+                </span>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                <div class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-3 border border-blue-200">
+                    <div class="text-xs text-blue-600 font-semibold uppercase tracking-wide mb-1">Net Liquidation</div>
+                    <div id="acct-nav" class="text-xl font-bold text-blue-800">—</div>
+                    <div class="text-xs text-blue-500 mt-0.5">Total Account Value</div>
+                </div>
+                <div class="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-3 border border-green-200">
+                    <div class="text-xs text-green-600 font-semibold uppercase tracking-wide mb-1">Cash Balance</div>
+                    <div id="acct-cash" class="text-xl font-bold text-green-800">—</div>
+                    <div class="text-xs text-green-500 mt-0.5">Available Cash</div>
+                </div>
+                <div class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-3 border border-purple-200">
+                    <div class="text-xs text-purple-600 font-semibold uppercase tracking-wide mb-1">Buying Power</div>
+                    <div id="acct-bp" class="text-xl font-bold text-purple-800">—</div>
+                    <div class="text-xs text-purple-500 mt-0.5">For New Positions</div>
+                </div>
+                <div id="acct-upnl-tile" class="rounded-lg p-3 border bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200">
+                    <div class="text-xs font-semibold uppercase tracking-wide mb-1 text-emerald-600">Unrealized P&L</div>
+                    <div id="acct-upnl" class="text-xl font-bold text-emerald-800">—</div>
+                    <div class="text-xs mt-0.5 text-emerald-500">Open Positions</div>
+                </div>
+                <div id="acct-rpnl-tile" class="rounded-lg p-3 border bg-gradient-to-br from-teal-50 to-teal-100 border-teal-200">
+                    <div class="text-xs font-semibold uppercase tracking-wide mb-1 text-teal-600">Realized P&L</div>
+                    <div id="acct-rpnl" class="text-xl font-bold text-teal-800">—</div>
+                    <div class="text-xs mt-0.5 text-teal-500">Closed Positions</div>
+                </div>
+            </div>
+            <div class="grid grid-cols-3 gap-3 mt-2">
+                <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200 text-xs">
+                    <span class="text-gray-500 font-semibold">Position Value:</span>
+                    <span id="acct-posval" class="font-bold text-gray-800">—</span>
+                </div>
+                <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200 text-xs">
+                    <span class="text-gray-500 font-semibold">Available Funds:</span>
+                    <span id="acct-avail" class="font-bold text-gray-800">—</span>
+                </div>
+                <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200 text-xs">
+                    <span class="text-gray-500 font-semibold">Maint. Margin:</span>
+                    <span id="acct-margin" class="font-bold text-gray-800">—</span>
+                </div>
+            </div>
+        </div>
+        <!-- Error state -->
+        <div id="acct-error" class="hidden flex items-center gap-3 text-sm text-gray-500">
+            <span class="w-2 h-2 rounded-full bg-gray-400 inline-block"></span>
+            <span id="acct-error-msg">Account summary unavailable — IBKR Gateway not connected.</span>
+            <a href="{% url 'ibkr:gateway_control' %}" class="ml-auto text-xs text-blue-600 hover:underline font-semibold">Connect Gateway →</a>
+        </div>
+    </div>
+
+    <script>
+    (function fetchAccountSummary() {
+        fetch('{% url "ibkr:account_summary_api" %}')
+            .then(r => r.json())
+            .then(d => {
+                document.getElementById('acct-loading').classList.add('hidden');
+                if (!d.connected) {
+                    const errEl = document.getElementById('acct-error');
+                    errEl.classList.remove('hidden');
+                    if (d.error) document.getElementById('acct-error-msg').textContent = 'IBKR not connected: ' + d.error;
+                    return;
+                }
+                document.getElementById('acct-currency').textContent = '(' + (d.currency || 'USD') + ')';
+                document.getElementById('acct-nav').textContent   = '$' + d.net_liquidation;
+                document.getElementById('acct-cash').textContent  = '$' + d.total_cash;
+                document.getElementById('acct-bp').textContent    = '$' + d.buying_power;
+                document.getElementById('acct-posval').textContent  = '$' + d.position_value;
+                document.getElementById('acct-avail').textContent   = '$' + d.available_funds;
+                document.getElementById('acct-margin').textContent  = '$' + d.maint_margin;
+
+                // Unrealized P&L colour
+                const upnl = d.unrealized_pnl || '—';
+                const upnlNeg = upnl.startsWith('-');
+                const upnlEl = document.getElementById('acct-upnl');
+                upnlEl.textContent = (upnlNeg ? '' : '+') + '$' + upnl;
+                const upnlTile = document.getElementById('acct-upnl-tile');
+                if (upnlNeg) {
+                    upnlTile.className = 'rounded-lg p-3 border bg-gradient-to-br from-red-50 to-red-100 border-red-200';
+                    upnlEl.className = 'text-xl font-bold text-red-800';
+                    upnlTile.querySelector('div').className = 'text-xs font-semibold uppercase tracking-wide mb-1 text-red-600';
+                    upnlTile.querySelectorAll('div')[2].className = 'text-xs mt-0.5 text-red-500';
+                }
+
+                // Realized P&L colour
+                const rpnl = d.realized_pnl || '—';
+                const rpnlNeg = rpnl.startsWith('-');
+                const rpnlEl = document.getElementById('acct-rpnl');
+                rpnlEl.textContent = (rpnlNeg ? '' : '+') + '$' + rpnl;
+                const rpnlTile = document.getElementById('acct-rpnl-tile');
+                if (rpnlNeg) {
+                    rpnlTile.className = 'rounded-lg p-3 border bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200';
+                    rpnlEl.className = 'text-xl font-bold text-orange-800';
+                    rpnlTile.querySelector('div').className = 'text-xs font-semibold uppercase tracking-wide mb-1 text-orange-600';
+                    rpnlTile.querySelectorAll('div')[2].className = 'text-xs mt-0.5 text-orange-500';
+                }
+
+                document.getElementById('acct-data').classList.remove('hidden');
+            })
+            .catch(err => {
+                document.getElementById('acct-loading').classList.add('hidden');
+                document.getElementById('acct-error').classList.remove('hidden');
+                document.getElementById('acct-error-msg').textContent = 'Could not load account summary.';
+            });
+    })();
+    </script>
+
     <!-- Tab Navigation -->
     <div class="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
         <div class="border-b border-gray-200">
@@ -107,6 +231,10 @@
                     <span class="text-lg">🔍 Discovery</span>
                     <span aria-hidden="true" class="tab-indicator bg-blue-500 absolute inset-x-0 bottom-0 h-0"></span>
                 </button>
+                <button onclick="switchTab('autotrade'); atInit();" id="tab-autotrade" class="tab-button group relative min-w-0 flex-1 overflow-hidden bg-white py-4 px-4 text-sm font-medium text-center hover:bg-gray-50 focus:z-10">
+                    <span class="text-lg">🤖 Auto-Trade</span>
+                    <span aria-hidden="true" class="tab-indicator bg-blue-500 absolute inset-x-0 bottom-0 h-0"></span>
+                </button>
             </nav>
         </div>
     </div>
@@ -119,6 +247,11 @@
     <!-- Tab Content: My Positions -->
     <div id="content-positions" class="tab-content hidden">
         {% include 'ibkr/tabs/positions_tab.html' %}
+    </div>
+
+    <!-- Tab Content: Auto-Trade -->
+    <div id="content-autotrade" class="tab-content hidden">
+        {% include 'ibkr/tabs/auto_trade_tab.html' %}
     </div>
 
     <!-- Tab Content: Discovery (with sub-tabs) -->
@@ -403,6 +536,32 @@ function getCookie(name) {
         }
     }
     return cookieValue;
+}
+
+// Discover new stocks via management command
+async function discoverNewStocks(btn) {
+    if (!confirm('This will scan a preset list of ~100 popular wheel strategy tickers and add any new ones to your database.\n\nThis may take 30-60 seconds. Continue?')) return;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Discovering...';
+    try {
+        const res = await fetch('{% url "ibkr:discover_stocks_api" %}', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCookie('csrftoken'), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preset: 'popular' })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showNotification(`✅ ${data.message}`, 'success');
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            showNotification('❌ ' + (data.error || 'Discovery failed'), 'error');
+        }
+    } catch (e) {
+        showNotification('❌ Network error: ' + e.message, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = origText;
 }
 
 // Notification function

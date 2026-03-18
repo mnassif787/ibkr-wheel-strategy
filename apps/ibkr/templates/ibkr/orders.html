@@ -316,6 +316,80 @@ document.addEventListener('DOMContentLoaded', function() {
         if (el) el.addEventListener('input', updateSummary);
         if (el) el.addEventListener('change', updateSummary);
     });
+
+    // ── Auto-fill from URL params (e.g. from "Sell PUT" button on stock detail) ──
+    const params = new URLSearchParams(window.location.search);
+    const autoAction = params.get('action');   // 'sell_put'
+    const autoTicker = params.get('ticker');
+    const autoStrike = params.get('strike');
+    const autoExpiry = params.get('expiry');   // YYYY-MM-DD
+    const autoPremium = params.get('premium'); // mid price per share
+
+    if (autoAction === 'sell_put' && autoTicker) {
+        // Set security type → Option, action → SELL, right → PUT
+        setSecType('OPT');
+        setAction('SELL');
+        document.getElementById('orderRight').value = 'P';
+
+        // Fill fields
+        document.getElementById('orderTicker').value = autoTicker;
+        if (autoStrike)  document.getElementById('orderStrike').value  = autoStrike;
+        if (autoExpiry)  document.getElementById('orderExpiry').value  = autoExpiry;
+
+        // Use mid price as starting limit price (slightly below mid is typical)
+        if (autoPremium) {
+            const mid = parseFloat(autoPremium);
+            // Round down to nearest cent as a conservative limit
+            document.getElementById('orderLimitPrice').value = mid.toFixed(2);
+        }
+
+        // Refresh the summary display
+        updateSummary();
+
+        // Scroll the form into view and highlight it briefly
+        const formCard = document.querySelector('.bg-gradient-to-r.from-blue-600');
+        if (formCard) {
+            formCard.closest('.bg-white').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            formCard.closest('.bg-white').classList.add('ring-4', 'ring-blue-400');
+            setTimeout(() => formCard.closest('.bg-white').classList.remove('ring-4', 'ring-blue-400'), 1200);
+        }
+
+        // Show a banner confirming auto-fill
+        const banner = document.createElement('div');
+        banner.className = 'fixed top-4 right-4 bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg text-sm font-semibold z-50 flex items-center gap-2';
+        banner.innerHTML = '✅ Order form pre-filled from stock detail — review and submit!';
+        document.body.appendChild(banner);
+        setTimeout(() => banner.remove(), 4000);
+    } else if (autoAction === 'sell_call' && autoTicker) {
+        // Set security type → Option, action → SELL, right → CALL
+        setSecType('OPT');
+        setAction('SELL');
+        document.getElementById('orderRight').value = 'C';
+
+        // Fill fields
+        document.getElementById('orderTicker').value = autoTicker;
+        if (autoStrike)  document.getElementById('orderStrike').value  = autoStrike;
+        if (autoExpiry)  document.getElementById('orderExpiry').value  = autoExpiry;
+
+        if (autoPremium) {
+            document.getElementById('orderLimitPrice').value = parseFloat(autoPremium).toFixed(2);
+        }
+
+        updateSummary();
+
+        const formCard = document.querySelector('.bg-gradient-to-r.from-blue-600');
+        if (formCard) {
+            formCard.closest('.bg-white').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            formCard.closest('.bg-white').classList.add('ring-4', 'ring-green-400');
+            setTimeout(() => formCard.closest('.bg-white').classList.remove('ring-4', 'ring-green-400'), 1200);
+        }
+
+        const banner = document.createElement('div');
+        banner.className = 'fixed top-4 right-4 bg-green-600 text-white px-5 py-3 rounded-lg shadow-lg text-sm font-semibold z-50 flex items-center gap-2';
+        banner.innerHTML = '✅ Covered Call pre-filled — review and submit!';
+        document.body.appendChild(banner);
+        setTimeout(() => banner.remove(), 4000);
+    }
 });
 
 async function getQuote() {

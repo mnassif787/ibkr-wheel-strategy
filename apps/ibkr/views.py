@@ -63,6 +63,56 @@ from .services.technical_analysis import TechnicalAnalysisService
 logger = logging.getLogger(__name__)
 
 
+def _auto_expire_stale_positions():
+    """Mark OPEN option positions whose expiry has passed as EXPIRED or ASSIGNED.
+    Runs cheaply on every hub page load — only touches rows that need updating.
+    """
+    from datetime import date as _d
+    from decimal import Decimal as _Dec
+    today = _d.today()
+    stale = list(OptionPosition.objects.filter(status='OPEN', expiry_date__lt=today).select_related('stock'))
+    for pos in stale:
+        try:
+            stock_price = float(pos.stock.last_price) if pos.stock.last_price else None
+            strike = float(pos.strike)
+            # Determine if the option expired in-the-money (assignment)
+            if stock_price is not None:
+                if pos.option_type == 'PUT' and stock_price < strike:
+                    new_status = 'ASSIGNED'
+                elif pos.option_type == 'CALL' and stock_price > strike:
+                    new_status = 'ASSIGNED'
+                else:
+                    new_status = 'EXPIRED'
+            else:
+                new_status = 'EXPIRED'
+            # For expired/assigned, realized P/L = total premium collected (kept)
+            entry_p = float(pos.total_premium) if pos.total_premium else 0
+            pos.status = new_status
+            pos.exit_premium = _Dec('0')
+            pos.realized_pl = _Dec(str(entry_p))
+            pos.exit_date = today
+            pos.save(update_fields=['status', 'exit_premium', 'realized_pl', 'exit_date'])
+            logger.info(f'Auto-expired {pos} → {new_status}')
+        except Exception as e:
+            logger.warning(f'Could not auto-expire {pos}: {e}')
+
+
+def _build_open_options_by_ticker(positions_list):
+    """Build {ticker: [position_dicts]} from an already-evaluated list — zero extra DB queries."""
+    result = {}
+    for p in positions_list:
+        ticker = p.stock.ticker
+        if ticker not in result:
+            result[ticker] = []
+        result[ticker].append({
+            'id': p.id,
+            'option_type': p.option_type,
+            'strike': p.strike,
+            'expiry_date': p.expiry_date,
+        })
+    return result
+
+
 def hub(request):
     # Handle manual stock add form
     if request.method == 'POST' and 'manual_add_ticker' in request.POST:
@@ -150,48 +200,106 @@ def hub(request):
 
     # POSITIONS TAB DATA
     # Stock positions
-    stock_positions = StockPosition.objects.select_related('stock').order_by('-market_value')
+    stock_positions = list(StockPosition.objects.select_related('stock').prefetch_related('stock__options').order_by('-market_value'))
+
+    # Pre-fetch all CALL options for stock positions in one query (avoids N queries)
+    _sp_stock_ids = [sp.stock_id for sp in stock_positions]
+    _all_calls_qs = (
+        Option.objects.filter(stock_id__in=_sp_stock_ids, option_type='CALL')
+        .order_by('expiry_date', 'strike')
+        .values('id', 'stock_id', 'strike', 'expiry_date',
+                'bid', 'ask', 'last', 'delta', 'implied_volatility')
+    )
+    from collections import defaultdict as _defaultdict
+    from datetime import date as _today_cls
+    _today = _today_cls.today()
+    _calls_by_stock = _defaultdict(list)
+    for _c in _all_calls_qs:
+        # Compute dte and mid_price (not DB columns)
+        _c['dte'] = (_c['expiry_date'] - _today).days if _c['expiry_date'] else None
+        bid, ask = _c['bid'], _c['ask']
+        if bid and ask:
+            _c['mid_price'] = (float(bid) + float(ask)) / 2
+        elif _c['last']:
+            _c['mid_price'] = float(_c['last'])
+        else:
+            _c['mid_price'] = None
+        _calls_by_stock[_c['stock_id']].append(_c)
+
+    # Attach best covered call options to each stock position
+    for sp in stock_positions:
+        sp.covered_calls = []
+        try:
+            stock = sp.stock
+            current_price = float(stock.last_price) if stock.last_price else None
+            if current_price:
+                all_calls = _calls_by_stock[sp.stock_id]  # no extra DB hit
+
+                call_candidates = []
+                for c in all_calls:
+                    # c is a dict from .values() — use dict access
+                    dte = c['dte']
+                    mid_price = c['mid_price']
+                    delta = c['delta']
+                    strike = c['strike']
+                    if not (dte and 1 <= dte <= 120 and mid_price and delta and strike):
+                        continue
+                    strike_f = float(strike)
+                    # Covered calls ideally OTM (strike >= current price)
+                    if strike_f < current_price:
+                        continue
+                    delta_abs = abs(float(delta))
+                    if not (0.05 <= delta_abs <= 0.50):
+                        continue
+                    apy = (float(mid_price) / strike_f) * (365 / dte) * 100
+                    if apy < 2:
+                        continue
+                    premium_f = float(mid_price)
+                    breakeven = strike_f + premium_f
+                    otm_pct = ((strike_f - current_price) / current_price) * 100
+                    avg_cost_f = float(sp.avg_cost) if sp.avg_cost else 0
+                    capital_pl_per_share = strike_f - avg_cost_f
+                    total_pl_per_share = capital_pl_per_share + premium_f
+                    total_pl_per_contract = total_pl_per_share * 100
+                    call_candidates.append({
+                        'option': c,
+                        'option_id': c['id'],
+                        'strike': strike_f,
+                        'expiry': c['expiry_date'],
+                        'dte': dte,
+                        'delta': float(delta),
+                        'iv': float(c['implied_volatility']) if c['implied_volatility'] else 0,
+                        'premium': premium_f,
+                        'premium_per_contract': premium_f * 100,
+                        'bid': float(c['bid']) if c['bid'] else 0,
+                        'ask': float(c['ask']) if c['ask'] else 0,
+                        'apy_pct': round(apy, 1),
+                        'breakeven': round(breakeven, 2),
+                        'otm_pct': round(otm_pct, 1),
+                        'prob_assignment': round(delta_abs * 100, 1),
+                        'avg_cost': round(avg_cost_f, 2),
+                        'capital_pl_per_share': round(capital_pl_per_share, 2),
+                        'total_pl_per_share': round(total_pl_per_share, 2),
+                        'total_pl_per_contract': round(total_pl_per_contract, 2),
+                    })
+
+                # Sort by APY descending, take top 8
+                call_candidates.sort(key=lambda x: x['apy_pct'], reverse=True)
+                sp.covered_calls = call_candidates[:8]
+        except Exception as e:
+            logger.warning(f"Error computing covered calls for {sp.stock.ticker}: {e}")
     
-    # Option positions
+    # Auto-expire any OPEN positions whose expiry date has passed
+    _auto_expire_stale_positions()
+
+    # Option positions — evaluate QuerySet to list once so we can reuse without extra hits
     open_positions = OptionPosition.objects.filter(status='OPEN').select_related('stock').order_by('-entry_date')
+    open_positions_list = list(open_positions)  # single DB hit, reused below
     closed_positions = OptionPosition.objects.exclude(status='OPEN').select_related('stock').order_by('-exit_date')[:10]
 
-    # Update current_premium for open positions using live/delayed quotes
-    try:
-        client = IBKRClient()
-        if client.ensure_connected():
-            from decimal import Decimal
-            for position in open_positions:
-                try:
-                    expiry_str = position.expiry_date.strftime('%Y%m%d')
-                    right = 'P' if position.option_type == 'PUT' else 'C'
-                    quote = client.get_option_quote(
-                        position.stock.ticker, expiry_str,
-                        float(position.strike), right
-                    )
-                    if quote:
-                        price = quote.get('mid') or quote.get('last')
-                        if price and price > 0:
-                            position.current_premium = Decimal(str(price))
-                            position.save(update_fields=['current_premium'])
-                except Exception as e:
-                    logger.warning(f"Could not fetch quote for {position}: {e}")
-    except Exception as e:
-        logger.warning(f"Could not update position premiums: {e}")
-    
-    # Add AI recommendations and enhanced analysis to positions
-    for position in open_positions:
-        # Get stock recommendation
-        stock_rec = AIAnalyzer.get_stock_recommendation(position.stock)
-        position.ai_recommendation = {
-            'action': stock_rec['recommendation'],
-            'confidence': stock_rec['confidence'],
-            'reason': stock_rec['reasoning'],
-            'color': 'green' if stock_rec['action'] == 'buy' else ('red' if stock_rec['action'] == 'sell' else 'yellow')
-        }
-        
-        # Add enhanced position analysis
-        position.analysis = PositionAnalyzer.analyze_position(position)
+    # Account summary loaded async via /api/account-summary/ — skip sync fetch here
+    # NOTE: Live IBKR quote refresh and AI analysis moved out of hub page load for performance.
+    # Quotes update via the dedicated /api/account-summary/ endpoint; AI analysis deferred.
     
     # STOCKS TAB DATA
     # Get watchlist tickers for "My Stocks" tab
@@ -253,13 +361,24 @@ def hub(request):
                     break
             
             if price_matches:
-                # Add basic stock info without complex calculations
+                # Calculate wheel score and entry signal for discovery stocks
                 stock.in_watchlist = stock.ticker in watchlist_tickers
-                # Set placeholder values for display
-                stock.wheel_score = 0
-                stock.score_breakdown = {'grade': 'N/A', 'total_score': 0}
-                stock.entry_signal = 'N/A'
-                stock.entry_color = 'gray'
+                try:
+                    score_data = calculate_wheel_score(stock)
+                    stock.wheel_score = score_data['total_score']
+                    stock.score_breakdown = score_data
+                    
+                    entry_signal = calculate_entry_signal(stock)
+                    stock.entry_signal = entry_signal['signal']
+                    stock.entry_quality = entry_signal['quality']
+                    stock.entry_score = entry_signal['score']
+                    stock.entry_color = entry_signal['signal_color']
+                except Exception as e:
+                    logger.warning(f"Error calculating scores for {stock.ticker}: {e}")
+                    stock.wheel_score = 0
+                    stock.score_breakdown = {'grade': 'N/A', 'total_score': 0}
+                    stock.entry_signal = 'N/A'
+                    stock.entry_color = 'gray'
                 discovery_stocks.append(stock)
     
     # Sort stocks
@@ -270,6 +389,8 @@ def hub(request):
         preferred_stock_scores.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
     elif sort_by == 'volume':
         preferred_stock_scores.sort(key=lambda x: x.avg_volume if x.avg_volume else 0, reverse=True)
+    elif sort_by == 'wheel_score':
+        preferred_stock_scores.sort(key=lambda x: x.wheel_score if hasattr(x, 'wheel_score') else 0, reverse=True)
     
     # Sort discovery stocks (only if filters were applied and we have results)
     if discovery_stocks:
@@ -277,17 +398,43 @@ def hub(request):
             discovery_stocks.sort(key=lambda x: float(x.last_price) if x.last_price else 0, reverse=True)
         elif sort_by == 'volume':
             discovery_stocks.sort(key=lambda x: x.avg_volume if x.avg_volume else 0, reverse=True)
+        elif sort_by == 'wheel_score':
+            discovery_stocks.sort(key=lambda x: x.wheel_score if hasattr(x, 'wheel_score') else 0, reverse=True)
     
     # OPTIONS TAB DATA
     selected_ticker = request.GET.get('ticker', '')
     selected_stock = None
     options = []
     available_stocks = Stock.objects.filter(options__isnull=False).distinct().order_by('ticker')
-    
+
     if selected_ticker:
         selected_stock = Stock.objects.filter(ticker=selected_ticker).first()
         if selected_stock:
-            options = Option.objects.filter(stock=selected_stock).order_by('expiry_date', 'strike')[:50]
+            from datetime import date as _date, timedelta as _timedelta
+            today = _date.today()
+            dte_filter = request.GET.get('dte_filter', 'weekly')
+            options_qs = Option.objects.filter(stock=selected_stock)
+
+            if dte_filter == 'short':       # < 7 DTE
+                options_qs = options_qs.filter(expiry_date__gte=today,
+                                               expiry_date__lt=today + _timedelta(days=7))
+            elif dte_filter == 'weekly':    # 7–14 DTE
+                options_qs = options_qs.filter(expiry_date__gte=today + _timedelta(days=7),
+                                               expiry_date__lte=today + _timedelta(days=14))
+            elif dte_filter == 'biweekly': # 14–21 DTE
+                options_qs = options_qs.filter(expiry_date__gt=today + _timedelta(days=14),
+                                               expiry_date__lte=today + _timedelta(days=21))
+            elif dte_filter == 'monthly':   # 21–45 DTE
+                options_qs = options_qs.filter(expiry_date__gt=today + _timedelta(days=21),
+                                               expiry_date__lte=today + _timedelta(days=45))
+            elif dte_filter == 'leaps':     # 45–120 DTE
+                options_qs = options_qs.filter(expiry_date__gt=today + _timedelta(days=45),
+                                               expiry_date__lte=today + _timedelta(days=120))
+            else:                           # 'all' — no DTE restriction
+                options_qs = options_qs.filter(expiry_date__gte=today)
+
+            # Apply min APY filter (calculated in template; pre-filter by mid_price > 0)
+            options = options_qs.order_by('expiry_date', 'strike')
     
     # SIGNALS TAB DATA
     signals = Signal.objects.filter(status='OPEN').select_related('stock', 'option').order_by('-quality_score')[:20]
@@ -296,10 +443,14 @@ def hub(request):
         'last_updated': last_updated,
         # Positions
         'stock_positions': stock_positions,
-        'open_positions': open_positions,
+        # Positions lists
+        'open_positions': open_positions_list,
         'closed_positions': closed_positions,
         # Stocks - two separate lists
         'preferred_stocks': preferred_stock_scores,  # For "My Stocks" tab
+        'open_option_tickers': {p.stock.ticker for p in open_positions_list},
+        'open_stock_tickers': {sp.stock.ticker for sp in stock_positions},
+        'open_options_by_ticker': _build_open_options_by_ticker(open_positions_list),
         'stocks': discovery_stocks,  # For "Discovery" tab
         'sort_by': sort_by,
         'price_ranges': price_ranges,  # Multi-select price ranges
@@ -312,6 +463,8 @@ def hub(request):
         'available_stocks': available_stocks,
         # Signals
         'signals': signals,
+        # Account
+        'account_summary': {},  # loaded async via JS
     }
     
     # Add debug and VNC links to context
@@ -605,19 +758,19 @@ def calculate_wheel_score(stock):
         scores['price_score']
     ]))
     
-    # Add grade
+    # Add grade with proper hex colors for good contrast
     if scores['total_score'] >= 80:
         scores['grade'] = 'A'
-        scores['grade_color'] = 'green'
+        scores['grade_color'] = '#10b981'  # green-500
     elif scores['total_score'] >= 65:
         scores['grade'] = 'B'
-        scores['grade_color'] = 'blue'
+        scores['grade_color'] = '#3b82f6'  # blue-500
     elif scores['total_score'] >= 50:
         scores['grade'] = 'C'
-        scores['grade_color'] = 'yellow'
+        scores['grade_color'] = '#f59e0b'  # amber-500 (visible with white text)
     else:
         scores['grade'] = 'D'
-        scores['grade_color'] = 'red'
+        scores['grade_color'] = '#ef4444'  # red-500
     
     return scores
 
@@ -806,19 +959,19 @@ def calculate_entry_signal(stock):
     if score >= 75:
         signal_data['signal'] = 'SELL PUT NOW'
         signal_data['quality'] = 'EXCELLENT'
-        signal_data['signal_color'] = 'green'
+        signal_data['signal_color'] = '#10b981'
     elif score >= 60:
         signal_data['signal'] = 'GOOD ENTRY'
         signal_data['quality'] = 'GOOD'
-        signal_data['signal_color'] = 'blue'
+        signal_data['signal_color'] = '#3b82f6'
     elif score >= 45:
         signal_data['signal'] = 'WAIT FOR DIP'
         signal_data['quality'] = 'FAIR'
-        signal_data['signal_color'] = 'yellow'
+        signal_data['signal_color'] = '#d97706'  # Darker amber for better contrast with white text
     else:
-        signal_data['signal'] = 'AVOID'
+        signal_data['signal'] = 'AVOID PUTS'
         signal_data['quality'] = 'POOR'
-        signal_data['signal_color'] = 'red'
+        signal_data['signal_color'] = '#ef4444'
     
     signal_data['score'] = int(score)
     signal_data['reasons'] = reasons
@@ -1217,43 +1370,101 @@ def stock_detail(request, ticker):
             'entry_score': 0
         }
     
-    # Generate actionable signals from current options data
-    signals = []
-    if analysis.get('entry_score', 0) >= 45:  # Only if timing is decent
-        try:
-            # Get top PUT options for this stock
-            top_puts = Option.objects.filter(
-                stock=stock,
+    # Calculate IV Rank (current IV relative to 52-week range)
+    try:
+        current_iv = stock.options.filter(
+            option_type='PUT',
+            implied_volatility__isnull=False,
+            dte__gte=14,
+            dte__lte=45
+        ).aggregate(Avg('implied_volatility'))['implied_volatility__avg']
+        
+        if current_iv:
+            # Get 52-week IV range
+            all_ivs = stock.options.filter(
                 option_type='PUT',
-                dte__gte=14,  # At least 2 weeks
-                dte__lte=60,  # At most 60 days
-            ).exclude(
-                mid_price__isnull=True
-            ).order_by('-implied_volatility')[:5]
+                implied_volatility__isnull=False
+            ).values_list('implied_volatility', flat=True)
             
-            for put in top_puts:
-                if put.delta and put.mid_price and put.strike:
-                    delta_abs = abs(float(put.delta))
+            if all_ivs:
+                iv_list = list(all_ivs)
+                iv_min = min(iv_list)
+                iv_max = max(iv_list)
+                
+                if iv_max > iv_min:
+                    iv_rank = ((current_iv - iv_min) / (iv_max - iv_min)) * 100
+                    analysis['iv_rank'] = round(iv_rank, 1)
+    except Exception as e:
+        pass
+    
+    # Generate actionable signals from current options data - ALWAYS show available options
+    signals = []
+    try:
+        # Get PUT options for this stock sorted by DTE (nearest first)
+        # Note: mid_price is a @property, cannot filter in DB query
+        all_puts = Option.objects.filter(
+            stock=stock,
+            option_type='PUT',
+        ).order_by('expiry_date')  # Sort by expiry (nearest first) not IV
+        
+        # Filter in Python for DTE range and valid mid_price - get up to 20 to ensure we catch good deltas
+        candidate_puts = [p for p in all_puts if p.dte and 14 <= p.dte <= 60 and p.mid_price and p.delta][:20]
+        
+        best_entry_trade = None
+        best_apy = 0
+        
+        for put in candidate_puts:
+            if put.delta and put.mid_price and put.strike:
+                delta_abs = abs(float(put.delta))
+                
+                # Calculate metrics
+                apy = (float(put.mid_price) / float(put.strike)) * (365 / put.dte) * 100 if put.dte > 0 else 0
+                
+                # Only show if reasonable delta for wheel (0.20-0.40)
+                if 0.20 <= delta_abs <= 0.40 and apy >= 10:
+                    # Create a signal-like dict for display
+                    signal_dict = {
+                        'signal_type': 'CASH_SECURED_PUT',
+                        'option': put,
+                        'premium': put.mid_price,
+                        'apy_pct': round(apy, 1),
+                        'quality_score': analysis['entry_score'],
+                        'generated_at': timezone.now(),
+                        'status': 'RECOMMENDED' if analysis['entry_score'] >= 60 else 'WATCH',
+                        'technical_reason': f"{analysis['entry_signal']} - {analysis['entry_quality']} entry with {apy:.0f}% APY"
+                    }
+                    signals.append(signal_dict)
                     
-                    # Calculate metrics
-                    apy = (float(put.mid_price) / float(put.strike)) * (365 / put.dte) * 100 if put.dte > 0 else 0
-                    
-                    # Only show if reasonable delta for wheel (0.20-0.40)
-                    if 0.20 <= delta_abs <= 0.40 and apy >= 10:
-                        # Create a signal-like dict for display
-                        signal_dict = {
-                            'signal_type': 'CASH_SECURED_PUT',
-                            'option': put,
-                            'premium': put.mid_price,
+                    # Track the best entry trade (ideal delta range 0.25-0.35, DTE 14-45, highest APY)
+                    if 0.25 <= delta_abs <= 0.35 and 14 <= put.dte <= 45 and apy > best_apy:
+                        best_apy = apy
+                        premium_per_contract = float(put.mid_price) * 100
+                        cost_if_assigned = float(put.strike) * 100
+                        roi_pct = (premium_per_contract / cost_if_assigned) * 100 if cost_if_assigned > 0 else 0
+                        
+                        best_entry_trade = {
+                            'strike': float(put.strike),
+                            'expiry': put.expiry_date,  # Fixed: was expiration_date
+                            'dte': put.dte,
+                            'delta': put.delta,
+                            'premium': float(put.mid_price),
+                            'premium_per_contract': premium_per_contract,
+                            'cost_if_assigned': cost_if_assigned,
+                            'roi_pct': round(roi_pct, 2),
                             'apy_pct': round(apy, 1),
-                            'quality_score': analysis['entry_score'],
-                            'generated_at': timezone.now(),
-                            'status': 'RECOMMENDED' if analysis['entry_score'] >= 60 else 'WATCH',
-                            'technical_reason': f"{analysis['entry_signal']} - {analysis['entry_quality']} entry with {apy:.0f}% APY"
+                            'bid': float(put.bid) if put.bid else 0,
+                            'ask': float(put.ask) if put.ask else 0,
+                            'iv': float(put.implied_volatility) if put.implied_volatility else 0
                         }
-                        signals.append(signal_dict)
-        except Exception as e:
-            pass  # No options available
+        
+        # Add best entry trade to analysis
+        analysis['best_entry_trade'] = best_entry_trade
+    except Exception as e:
+        # Log the error for debugging
+        import traceback
+        print(f"❌ Error generating options signals: {e}")
+        print(traceback.format_exc())
+        pass  # No options available
     
     return render(request, 'ibkr/stock_detail.html', {
         'stock': stock,
@@ -1573,45 +1784,103 @@ def get_position_ai_recommendation(position):
 def health_check(request):
     """System health check view with detailed status"""
     from apps.ibkr.services.health_check import get_health_check_service, refresh_health_check
-    
-    # Check if refresh requested
-    if request.GET.get('refresh') == 'true':
+
+    # Check if refresh requested (support both ?refresh=true and ?refresh=1)
+    if request.GET.get('refresh') in ('true', '1', 'yes'):
         results = refresh_health_check()
         messages.success(request, 'Health check refreshed')
     else:
         health_service = get_health_check_service()
         results = health_service.results
-    
+
+    # AJAX support: return JSON for XHR requests
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        from django.http import JsonResponse
+        import json
+        return JsonResponse(results, safe=False, json_dumps_params={'default': str})
+
+    # Convert timestamp to Abu Dhabi time (UTC+4) for display
+    import pytz
+    abudhabi_tz = pytz.timezone('Asia/Dubai')
+    timestamp_ad = results['timestamp'].astimezone(abudhabi_tz)
+
     context = {
         'health_results': results,
         'checks': results['checks'],
         'overall_status': results['overall_status'],
-        'timestamp': results['timestamp'],
+        'timestamp': timestamp_ad,
+        'passed': results.get('passed', 0),
+        'warnings': results.get('warnings', 0),
+        'failed': results.get('failed', 0),
+        'total_time_ms': results.get('total_time_ms', 0),
     }
-    
+
     return render(request, 'ibkr/health_check.html', context)
 
 
 def gateway_control(request):
-    """IB Gateway control panel"""
+    """IB Gateway control panel - unified API status + VNC login"""
     client = IBKRClient()
-    
+    is_connected = client.ensure_connected()
+
+    import os
+    ibkr_host = client.host
+    in_docker = ibkr_host not in ('localhost', '127.0.0.1')
+    # noVNC is always accessed at localhost:6080 from the browser.
+    # Docker maps container port 6080 to host port 6080.
+    # Override with VNC_URL env var for Railway/cloud deployments.
+    vnc_url = os.environ.get('VNC_URL', 'http://localhost:6080')
+
     context = {
-        'is_connected': client.ensure_connected(),
+        'is_connected': is_connected,
         'gateway_host': client.host,
         'gateway_port': client.port,
         'client_id': client.client_id,
+        'vnc_url': vnc_url,
+        'in_docker': in_docker,
     }
-    
+
     return render(request, 'ibkr/gateway_control.html', context)
 
 
+def account_summary_api(request):
+    """JSON API: fetch live IBKR account summary for async page loading."""
+    try:
+        client = IBKRClient()
+        if not client.ensure_connected():
+            return JsonResponse({'connected': False, 'error': 'Not connected to IBKR Gateway'})
+        raw = client.get_account_summary() or {}
+
+        def _f(key, default='—'):
+            v = raw.get(key, '')
+            try:
+                return f"{float(v):,.2f}" if v else default
+            except Exception:
+                return v or default
+
+        return JsonResponse({
+            'connected': True,
+            'net_liquidation':  _f('NetLiquidation'),
+            'total_cash':       _f('TotalCashValue'),
+            'buying_power':     _f('BuyingPower'),
+            'position_value':   _f('GrossPositionValue'),
+            'unrealized_pnl':   _f('UnrealizedPnL'),
+            'realized_pnl':     _f('RealizedPnL'),
+            'available_funds':  _f('AvailableFunds'),
+            'maint_margin':     _f('MaintMarginReq'),
+            'currency':         raw.get('Currency', 'USD'),
+        })
+    except Exception as e:
+        logger.warning(f"account_summary_api error: {e}")
+        return JsonResponse({'connected': False, 'error': str(e)}, status=500)
+
+
 def gateway_status_api(request):
-    """API endpoint for gateway connection status"""
+    """API endpoint for gateway connection status — passive check only, no reconnect attempt."""
     client = IBKRClient()
     
     try:
-        is_connected = client.ensure_connected()
+        is_connected = client.is_connected()   # does NOT try to reconnect
         
         status_data = {
             'connected': is_connected,
@@ -1687,6 +1956,39 @@ def gateway_disconnect_api(request):
             'success': False,
             'error': str(e),
         }, status=500)
+
+
+def discover_stocks_api(request):
+    """API endpoint to run discover_stocks management command and add new tickers to the DB"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST method required'}, status=405)
+
+    from django.core.management import call_command
+    from io import StringIO
+    import json
+
+    try:
+        body = json.loads(request.body) if request.body else {}
+        preset = body.get('preset', 'popular')
+
+        before_count = Stock.objects.count()
+
+        output = StringIO()
+        call_command('discover_stocks', preset=preset, stdout=output, stderr=output)
+
+        after_count = Stock.objects.count()
+        new_stocks = after_count - before_count
+
+        return JsonResponse({
+            'success': True,
+            'new_stocks': new_stocks,
+            'total_stocks': after_count,
+            'message': f'Added {new_stocks} new stocks. Total: {after_count}.',
+            'output': output.getvalue()[-500:],  # last 500 chars of output
+        })
+    except Exception as e:
+        logger.error(f'discover_stocks_api error: {e}')
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 def refresh_all_data_api(request):
@@ -1853,6 +2155,25 @@ def sync_positions_api(request):
             'success': False,
             'error': str(e),
         }, status=500)
+
+
+def auto_expire_positions_api(request):
+    """Manually trigger auto-expire of stale open positions."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+    try:
+        from datetime import date
+        today = date.today()
+        stale_qs = OptionPosition.objects.filter(status='OPEN', expiry_date__lt=today)
+        count_before = stale_qs.count()
+        _auto_expire_stale_positions()
+        return JsonResponse({
+            'success': True,
+            'expired_count': count_before,
+            'message': f'{count_before} position(s) auto-expired/assigned.',
+        })
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=500)
 
 
 def sync_positions_status_api(request):
@@ -2285,10 +2606,9 @@ def orders_page(request):
 
 
 def vnc_viewer(request):
-    """View to access IB Gateway VNC interface via iframe"""
-    return render(request, 'ibkr/vnc.html', {
-        'page_title': 'IB Gateway VNC',
-    })
+    """Redirect VNC viewer to the unified gateway control page"""
+    from django.shortcuts import redirect
+    return redirect('ibkr:gateway_control')
 
 
 def add_to_watchlist(request):
@@ -2373,6 +2693,351 @@ def add_to_watchlist(request):
             return JsonResponse({'success': False, 'error': str(e)}, status=500)
     
     return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
+
+
+# ==========================================
+# AUTO-TRADE API ENDPOINTS
+# ==========================================
+
+def auto_trade_suggest_tickers_api(request):
+    """
+    GET: Return top-scoring stocks NOT already in the watchlist,
+    as candidates to add to auto-trade.
+    """
+    from apps.ibkr.models import StockWheelScore, Stock
+
+    # Tickers already in watchlist
+    existing = set(Watchlist.objects.values_list('ticker', flat=True))
+
+    # All scored stocks outside the watchlist, best first
+    scores = (
+        StockWheelScore.objects
+        .select_related('stock')
+        .exclude(stock__ticker__in=existing)
+        .filter(grade__in=('A', 'B'))
+        .order_by('-total_score')
+    )[:30]
+
+    suggestions = []
+    seen = set()
+    for s in scores:
+        ticker = s.stock.ticker
+        if ticker in seen:
+            continue
+        seen.add(ticker)
+        suggestions.append({
+            'ticker': ticker,
+            'name': s.stock.name or ticker,
+            'grade': s.grade,
+            'score': int(s.total_score),
+            'last_price': str(s.stock.last_price) if s.stock.last_price else None,
+            'sector': s.stock.sector or '',
+        })
+
+    return JsonResponse({'success': True, 'suggestions': suggestions})
+
+
+def auto_trade_config_api(request):
+    """GET: load config + all stock configs. POST: save global config + stock toggles."""
+    from apps.ibkr.models import AutoTradeConfig, AutoTradeStockConfig, Stock, StockWheelScore
+    from apps.ibkr.services.auto_trade_engine import get_month_progress
+
+    if request.method == 'GET':
+        try:
+            config = AutoTradeConfig.get_config()
+            progress = get_month_progress()
+
+            # Build per-stock list (all watchlist stocks)
+            watchlist_tickers = list(Watchlist.objects.values_list('ticker', flat=True))
+            stocks = Stock.objects.filter(ticker__in=watchlist_tickers).order_by('ticker')
+
+            stock_data = []
+            for stock in stocks:
+                try:
+                    sc = AutoTradeStockConfig.objects.get(stock=stock)
+                except AutoTradeStockConfig.DoesNotExist:
+                    sc = None
+
+                score = StockWheelScore.objects.filter(stock=stock).first()
+                from apps.ibkr.models import OptionPosition, StockPosition
+                open_pos = OptionPosition.objects.filter(stock=stock, status='OPEN').first()
+                stock_pos = StockPosition.objects.filter(stock=stock).first()
+
+                if open_pos:
+                    status_badge = f'OPEN {open_pos.option_type}'
+                elif stock_pos and stock_pos.quantity >= 100:
+                    status_badge = f'HOLDING {stock_pos.quantity} shares'
+                else:
+                    status_badge = 'No Position'
+
+                stock_data.append({
+                    'ticker': stock.ticker,
+                    'name': stock.name,
+                    'last_price': str(stock.last_price) if stock.last_price else None,
+                    'grade': score.grade if score else None,
+                    'total_score': float(score.total_score) if score else None,
+                    'status': status_badge,
+                    'auto_trade_enabled': sc.enabled if sc else False,
+                    'max_contracts': sc.max_contracts if sc else None,
+                })
+
+            return JsonResponse({
+                'success': True,
+                'config': {
+                    'enabled': config.enabled,
+                    'monthly_goal': str(config.monthly_goal),
+                    'risk_level': config.risk_level,
+                    'last_run': config.last_run.isoformat() if config.last_run else None,
+                },
+                'progress': {
+                    'earned': str(progress['earned']),
+                    'goal': str(progress['goal']),
+                    'remaining': str(progress['remaining']),
+                    'pct': progress['pct'],
+                },
+                'stocks': stock_data,
+            })
+        except Exception as e:
+            logger.error(f'auto_trade_config_api GET error: {e}', exc_info=True)
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+    elif request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+
+        config = AutoTradeConfig.get_config()
+
+        # Global settings
+        if 'enabled' in data:
+            config.enabled = bool(data['enabled'])
+        if 'monthly_goal' in data:
+            try:
+                config.monthly_goal = float(data['monthly_goal'])
+            except (ValueError, TypeError):
+                return JsonResponse({'success': False, 'error': 'Invalid monthly_goal'}, status=400)
+        if 'risk_level' in data:
+            if data['risk_level'] in ('conservative', 'moderate', 'aggressive'):
+                config.risk_level = data['risk_level']
+        config.save()
+
+        # Per-stock toggles: [{'ticker': 'F', 'enabled': true, 'max_contracts': null}, ...]
+        from apps.ibkr.models import AutoTradeStockConfig, Stock
+        stock_updates = data.get('stocks', [])
+        for su in stock_updates:
+            ticker = su.get('ticker', '').upper()
+            try:
+                stock = Stock.objects.get(ticker=ticker)
+                sc, _ = AutoTradeStockConfig.objects.get_or_create(stock=stock)
+                if 'enabled' in su:
+                    sc.enabled = bool(su['enabled'])
+                if 'max_contracts' in su:
+                    mc = su['max_contracts']
+                    sc.max_contracts = int(mc) if mc else None
+                sc.save()
+            except Stock.DoesNotExist:
+                pass
+
+        return JsonResponse({'success': True, 'message': 'Auto-trade config saved.'})
+
+    return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
+
+
+def auto_trade_run_api(request):
+    """POST: trigger one auto-trade cycle immediately."""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
+
+    import threading
+    from apps.ibkr.services.auto_trade_engine import run_auto_trade_cycle
+
+    dry_run = json.loads(request.body).get('dry_run', False) if request.body else False
+
+    result_holder = {}
+
+    def _run():
+        try:
+            result_holder['summary'] = run_auto_trade_cycle(dry_run=dry_run)
+        except Exception as e:
+            result_holder['error'] = str(e)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=120)  # wait up to 2 min
+
+    if 'error' in result_holder:
+        return JsonResponse({'success': False, 'error': result_holder['error']}, status=500)
+
+    summary = result_holder.get('summary', {})
+    return JsonResponse({
+        'success': True,
+        'dry_run': dry_run,
+        'trades': summary.get('trades', 0),
+        'skipped': summary.get('skipped', 0),
+        'earned': str(summary.get('earned', 0)),
+        'goal_met': summary.get('goal_met', False),
+        'errors': summary.get('errors', []),
+    })
+
+
+def auto_trade_logs_api(request):
+    """GET: return last 30 AutoTradeLog entries."""
+    from apps.ibkr.models import AutoTradeLog
+
+    logs = (
+        AutoTradeLog.objects
+        .select_related('stock')
+        .order_by('-timestamp')[:30]
+    )
+    data = []
+    for log in logs:
+        data.append({
+            'id': log.id,
+            'timestamp': log.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            'ticker': log.stock.ticker,
+            'action': log.action,
+            'status': log.status,
+            'strike': str(log.strike) if log.strike else None,
+            'expiry_date': str(log.expiry_date) if log.expiry_date else None,
+            'contracts': log.contracts,
+            'premium_per_contract': str(log.premium_per_contract) if log.premium_per_contract else None,
+            'total_premium': str(log.total_premium) if log.total_premium else None,
+            'ibkr_order_id': log.ibkr_order_id,
+            'reason': log.reason,
+            'goal_contribution': str(log.goal_contribution) if log.goal_contribution else None,
+        })
+    return JsonResponse({'success': True, 'logs': data})
+
+
+def auto_trade_logs_clear_api(request):
+    """POST: delete all AutoTradeLog entries."""
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
+    from apps.ibkr.models import AutoTradeLog
+    deleted, _ = AutoTradeLog.objects.all().delete()
+    logger.info(f'Auto-trade log cleared — {deleted} entries deleted.')
+    return JsonResponse({'success': True, 'deleted': deleted})
+
+
+def auto_trade_progress_api(request):
+    """GET: current month earned vs goal."""
+    from apps.ibkr.services.auto_trade_engine import get_month_progress
+    progress = get_month_progress()
+    return JsonResponse({
+        'success': True,
+        'earned': str(progress['earned']),
+        'goal': str(progress['goal']),
+        'remaining': str(progress['remaining']),
+        'pct': progress['pct'],
+    })
+
+
+def auto_trade_positions_monitor_api(request):
+    """GET: open positions with moneyness, DTE, and action recommendation."""
+    from apps.ibkr.models import OptionPosition
+    from datetime import date
+
+    today = date.today()
+    positions = (
+        OptionPosition.objects
+        .filter(status='OPEN')
+        .select_related('stock')
+        .order_by('expiry_date')
+    )
+
+    data = []
+    for p in positions:
+        price = float(p.stock.last_price) if p.stock.last_price else None
+        strike = float(p.strike)
+        dte = (p.expiry_date - today).days
+        prem = float(p.total_premium) if p.total_premium else 0
+        entry_prem = float(p.entry_premium) if p.entry_premium else 0
+        contracts = p.contracts or 1
+
+        # Moneyness
+        if price is not None:
+            if p.option_type == 'PUT':
+                itm = price < strike
+                pct_away = (strike - price) / price * 100
+            else:
+                itm = price > strike
+                pct_away = (price - strike) / price * 100
+            if itm:
+                moneyness = 'ITM'
+                pct_label = f'{abs(pct_away):.1f}% in-the-money'
+            else:
+                moneyness = 'OTM'
+                pct_label = f'{abs(pct_away):.1f}% out-of-the-money'
+        else:
+            itm = False
+            pct_away = 0
+            moneyness = 'UNKNOWN'
+            pct_label = 'price unavailable'
+
+        # Premium decay — current value vs entry
+        # Rough estimate: for OTM near expiry most value is gone
+        decay_pct = None
+        if entry_prem > 0 and p.option and p.option.ask is not None:
+            try:
+                current_val = float(p.option.ask) * contracts * 100
+                decay_pct = round((1 - current_val / prem) * 100, 1) if prem else None
+            except Exception:
+                pass
+
+        # Recommendation logic
+        if itm and p.option_type == 'PUT':
+            rec = 'ASSIGN'
+            rec_label = 'Let assign — collect shares'
+            rec_color = 'orange'
+            rec_icon = '📥'
+        elif itm and p.option_type == 'CALL':
+            rec = 'ASSIGN'
+            rec_label = 'Let assign — shares called away'
+            rec_color = 'orange'
+            rec_icon = '📤'
+        elif not itm and dte <= 5:
+            rec = 'EXPIRE'
+            rec_label = 'Let expire worthless — keep premium'
+            rec_color = 'green'
+            rec_icon = '✅'
+        elif not itm and decay_pct is not None and decay_pct >= 50:
+            rec = 'CLOSE_EARLY'
+            rec_label = f'50% profit rule — consider closing early ({decay_pct:.0f}% decayed)'
+            rec_color = 'blue'
+            rec_icon = '💰'
+        elif not itm and dte <= 21:
+            rec = 'WATCH'
+            rec_label = 'Watch — approaching expiry, mostly safe'
+            rec_color = 'yellow'
+            rec_icon = '👀'
+        else:
+            rec = 'HOLD'
+            rec_label = 'Hold — plenty of time remaining'
+            rec_color = 'gray'
+            rec_icon = '⏳'
+
+        data.append({
+            'ticker': p.stock.ticker,
+            'option_type': p.option_type,
+            'strike': str(p.strike),
+            'expiry_date': str(p.expiry_date),
+            'dte': dte,
+            'contracts': contracts,
+            'total_premium': f'{prem:.2f}',
+            'entry_premium_per': f'{entry_prem:.2f}',
+            'current_price': f'{price:.2f}' if price else None,
+            'moneyness': moneyness,
+            'pct_label': pct_label,
+            'itm': itm,
+            'decay_pct': decay_pct,
+            'recommendation': rec,
+            'rec_label': rec_label,
+            'rec_color': rec_color,
+            'rec_icon': rec_icon,
+        })
+
+    return JsonResponse({'success': True, 'positions': data})
 
 
 def remove_from_watchlist(request):

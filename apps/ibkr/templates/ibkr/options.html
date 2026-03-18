@@ -36,6 +36,9 @@
             </div>
             <div class="flex items-center space-x-2">
                 <div id="autoRefreshContainer"></div>
+                <button onclick="refreshOptions()" id="refreshOptionsBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm">
+                    📊 Sync Options
+                </button>
                 <a href="{% url 'ibkr:watchlist_refresh' %}" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold text-sm">
                     🔄 Refresh Data
                 </a>
@@ -1167,6 +1170,66 @@ function resetFilters() {
     document.getElementById('typeFilter').value = 'all';
     localStorage.removeItem('optionsFilterState');
     applyFilters();
+}
+
+// Refresh options data via yfinance sync
+async function refreshOptions() {
+    const btn = document.getElementById('refreshOptionsBtn');
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Syncing...';
+    
+    try {
+        const ticker = '{{ stock.ticker|default:"" }}';
+        const res = await fetch('{% url "ibkr:sync_yfinance_options" %}?ticker=' + ticker, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCookie('csrftoken') }
+        });
+        const data = await res.json();
+        if (data.success) {
+            showNotification('✅ Options synced! Reloading...', 'success');
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            showNotification('❌ ' + (data.message || 'Sync failed'), 'error');
+            btn.disabled = false;
+            btn.textContent = origText;
+        }
+    } catch (e) {
+        showNotification('❌ Network error: ' + e.message, 'error');
+        btn.disabled = false;
+        btn.textContent = origText;
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function showNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-50 ${
+        type === 'success' ? 'bg-green-500 text-white' :
+        type === 'error' ? 'bg-red-500 text-white' :
+        'bg-blue-500 text-white'
+    }`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    setTimeout(() => {
+        notification.style.transition = 'opacity 0.3s';
+        notification.style.opacity = '0';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
 }
 
 // Apply filters on page load
