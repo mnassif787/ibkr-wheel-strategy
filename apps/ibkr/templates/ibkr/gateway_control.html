@@ -152,7 +152,28 @@
                     </a>
                 </div>
 
-                <!-- VNC iframe -->
+                <!-- VNC iframe / cloud fallback -->
+                {% if is_cloud %}
+                <div style="height: 540px;" class="flex flex-col items-center justify-center bg-gray-50 text-center p-10">
+                    <div class="text-6xl mb-4">🖥️</div>
+                    <h3 class="text-lg font-semibold text-gray-700 mb-2">VNC runs on your local machine</h3>
+                    <p class="text-gray-500 text-sm mb-6 max-w-sm">
+                        This app is deployed on a cloud server. IB Gateway must be started
+                        on <strong>your local PC</strong> and the VNC is accessed through your browser directly.
+                    </p>
+                    <ol class="text-left text-sm text-gray-600 space-y-2 mb-6 max-w-sm">
+                        <li>1. On your PC, run: <code class="bg-gray-100 px-1 rounded font-mono text-xs">docker-compose up -d ib-gateway</code></li>
+                        <li>2. Open VNC in your browser: <a href="http://localhost:6080" target="_blank"
+                            class="text-blue-600 hover:underline font-mono text-xs">http://localhost:6080</a></li>
+                        <li>3. Log in with your IBKR credentials and complete 2FA</li>
+                        <li>4. The API will auto-connect once you're logged in</li>
+                    </ol>
+                    <a href="http://localhost:6080" target="_blank"
+                        class="inline-flex items-center gap-2 bg-blue-600 text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-blue-700 transition">
+                        ↗ Open VNC Locally (localhost:6080)
+                    </a>
+                </div>
+                {% else %}
                 <div id="vnc-container" style="height: 540px; position: relative;">
                     <iframe
                         id="vnc-iframe"
@@ -177,6 +198,7 @@
                         </div>
                     </div>
                 </div>
+                {% endif %}
 
                 <!-- VNC Tips -->
                 <div class="px-5 py-3 border-t border-gray-100 bg-gray-50">

@@ -1831,6 +1831,14 @@ def gateway_control(request):
     # Override with VNC_URL env var for Railway/cloud deployments.
     vnc_url = os.environ.get('VNC_URL', 'http://localhost:6080')
 
+    # Detect Railway / cloud environment (VNC iframe won't work over HTTPS due to mixed-content)
+    is_cloud = bool(
+        os.environ.get('RAILWAY_ENVIRONMENT')
+        or os.environ.get('RAILWAY_PROJECT_ID')
+        or os.environ.get('RENDER')
+        or os.environ.get('HEROKU_APP_NAME')
+    )
+
     context = {
         'is_connected': is_connected,
         'gateway_host': client.host,
@@ -1838,6 +1846,7 @@ def gateway_control(request):
         'client_id': client.client_id,
         'vnc_url': vnc_url,
         'in_docker': in_docker,
+        'is_cloud': is_cloud,
     }
 
     return render(request, 'ibkr/gateway_control.html', context)
